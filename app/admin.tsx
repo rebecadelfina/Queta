@@ -1,26 +1,31 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   StyleSheet, Text, View, ScrollView, Pressable, TextInput,
-  Platform, Alert, KeyboardAvoidingView,
+  Platform, Alert, KeyboardAvoidingView, Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
-import { getTodayStr } from "@/lib/storage";
+import { getTodayStr, MARKETS, checkUserAccess } from "@/lib/storage";
+
+type TabType = "predictions" | "scale" | "payments" | "users" | "comments";
 
 export default function AdminScreen() {
   const insets = useSafeAreaInsets();
   const {
-    predictions, addPrediction, updatePrediction, deletePrediction,
+    currentUser, predictions, comments, allUsers,
+    addPrediction, updatePrediction, deletePrediction,
     scaleEntries, addScaleEntry,
-    subscription, approveSubscription,
-    isAdmin,
+    approveUserSubscription,
+    approveComment, deleteComment,
   } = useData();
 
-  const [tab, setTab] = useState<"predictions" | "scale" | "payments">("predictions");
+  const [tab, setTab] = useState<TabType>("predictions");
+  const [showMarketPicker, setShowMarketPicker] = useState(false);
 
   const [homeTeam, setHomeTeam] = useState("");
   const [awayTeam, setAwayTeam] = useState("");
@@ -29,11 +34,13 @@ export default function AdminScreen() {
   const [market, setMarket] = useState("");
   const [odd, setOdd] = useState("");
   const [isPremium, setIsPremium] = useState(false);
+  const [marketSearch, setMarketSearch] = useState("");
 
   const [scaleOddValue, setScaleOddValue] = useState("");
   const [scaleOddLabel, setScaleOddLabel] = useState("");
   const [scaleDate, setScaleDate] = useState(getTodayStr());
-  const [scaleIsScheduled, setScaleIsScheduled] = useState(false);
+
+  const isAdmin = currentUser?.isAdmin ?? false;
 
   if (!isAdmin) {
     return (
@@ -44,11 +51,17 @@ export default function AdminScreen() {
     );
   }
 
+  const filteredMarkets = MARKETS.filter((m) =>
+    m.toLowerCase().includes(marketSearch.toLowerCase())
+  );
+
+  const pendingPayments = allUsers.filter((u) => u.subscription.paymentStatus === "pending");
+  const pendingComments = comments.filter((c) => !c.approved);
+  const nonAdminUsers = allUsers.filter((u) => !u.isAdmin);
+
   const handleAddPrediction = async () => {
     if (!homeTeam || !awayTeam || !league || !matchTime || !market || !odd) {
-      if (Platform.OS !== "web") {
-        Alert.alert("Erro", "Preencha todos os campos");
-      }
+      if (Platform.OS !== "web") Alert.alert("Erro", "Preencha todos os campos");
       return;
     }
     await addPrediction({
@@ -72,7 +85,7 @@ export default function AdminScreen() {
       await addScaleEntry({
         date: scaleDate,
         odds: [{ value: parseFloat(scaleOddValue), result: "pending" as const, label: scaleOddLabel || undefined }],
-        isScheduled: scaleIsScheduled,
+        isScheduled: false,
       });
     }
     setScaleOddValue(""); setScaleOddLabel("");
@@ -89,6 +102,14 @@ export default function AdminScreen() {
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
   const todayPredictions = predictions.filter((p) => p.date === getTodayStr());
+
+  const tabs: { key: TabType; label: string; badge?: number }[] = [
+    { key: "predictions", label: "Jogos" },
+    { key: "scale", label: "Escala" },
+    { key: "payments", label: "Pag.", badge: pendingPayments.length },
+    { key: "users", label: "Users" },
+    { key: "comments", label: "Chat", badge: pendingComments.length },
+  ];
 
   return (
     <View style={styles.container}>
@@ -110,19 +131,26 @@ export default function AdminScreen() {
             <Text style={styles.title}>Painel Admin</Text>
           </View>
 
-          <View style={styles.tabRow}>
-            {(["predictions", "scale", "payments"] as const).map((t) => (
-              <Pressable
-                key={t}
-                onPress={() => setTab(t)}
-                style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
-              >
-                <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                  {t === "predictions" ? "Jogos" : t === "scale" ? "Escala" : "Pagamentos"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll}>
+            <View style={styles.tabRow}>
+              {tabs.map((t) => (
+                <Pressable
+                  key={t.key}
+                  onPress={() => setTab(t.key)}
+                  style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]}
+                >
+                  <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>
+                    {t.label}
+                  </Text>
+                  {!!t.badge && t.badge > 0 && (
+                    <View style={styles.badgeCircle}>
+                      <Text style={styles.badgeText}>{t.badge}</Text>
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
 
           {tab === "predictions" && (
             <>
@@ -168,13 +196,15 @@ export default function AdminScreen() {
                     keyboardType="numeric"
                   />
                 </View>
-                <TextInput
-                  style={styles.inputFull}
-                  placeholder="Mercado (ex: +2.5 Golos)"
-                  placeholderTextColor={Colors.light.textSecondary}
-                  value={market}
-                  onChangeText={setMarket}
-                />
+                <Pressable
+                  onPress={() => setShowMarketPicker(true)}
+                  style={styles.marketSelector}
+                >
+                  <Text style={[styles.marketSelectorText, !market && { color: Colors.light.textSecondary }]}>
+                    {market || "Selecionar Mercado"}
+                  </Text>
+                  <Ionicons name="chevron-down" size={16} color={Colors.light.textSecondary} />
+                </Pressable>
                 <Pressable
                   onPress={() => setIsPremium(!isPremium)}
                   style={styles.toggleRow}
@@ -290,35 +320,225 @@ export default function AdminScreen() {
 
           {tab === "payments" && (
             <>
-              <Text style={styles.sectionTitle}>Pagamentos Pendentes</Text>
-              {subscription && subscription.paymentStatus === "pending" ? (
-                <View style={styles.paymentCard}>
-                  <View style={styles.paymentInfo}>
-                    <Text style={styles.paymentPlan}>
-                      Plano: {subscription.plan === "7days" ? "7 Dias (2.000 Kz)" : "30 Dias (5.000 Kz)"}
-                    </Text>
-                    <Text style={styles.paymentDate}>
-                      Enviado: {new Date(subscription.startDate).toLocaleDateString("pt")}
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={approveSubscription}
-                    style={({ pressed }) => [styles.approveBtn, { opacity: pressed ? 0.8 : 1 }]}
-                  >
-                    <Ionicons name="checkmark-circle" size={18} color="#000" />
-                    <Text style={styles.approveBtnText}>Aprovar</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.emptyPayments}>
+              <Text style={styles.sectionTitle}>Pagamentos Pendentes ({pendingPayments.length})</Text>
+              {pendingPayments.length === 0 ? (
+                <View style={styles.emptyCard}>
                   <Ionicons name="card-outline" size={36} color={Colors.light.textSecondary} />
                   <Text style={styles.emptyText}>Nenhum pagamento pendente</Text>
                 </View>
+              ) : (
+                pendingPayments.map((user) => (
+                  <View key={user.id} style={styles.paymentCard}>
+                    <View style={styles.payUserRow}>
+                      <View style={styles.payUserAvatar}>
+                        {user.photoUri ? (
+                          <Image source={{ uri: user.photoUri }} style={styles.payUserPhoto} contentFit="cover" />
+                        ) : (
+                          <Ionicons name="person" size={16} color={Colors.light.textSecondary} />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.payUserName}>{user.displayName}</Text>
+                        <Text style={styles.payUserSub}>@{user.username}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.payPlan}>
+                      Plano: {user.subscription.plan === "7days" ? "7 Dias (2.000 Kz)" : "30 Dias (5.000 Kz)"}
+                    </Text>
+                    {user.subscription.paymentProofUri && (
+                      <Image
+                        source={{ uri: user.subscription.paymentProofUri }}
+                        style={styles.payProofImage}
+                        contentFit="contain"
+                      />
+                    )}
+                    <Pressable
+                      onPress={() => approveUserSubscription(user.id)}
+                      style={({ pressed }) => [styles.approveBtn, { opacity: pressed ? 0.8 : 1 }]}
+                    >
+                      <Ionicons name="checkmark-circle" size={18} color="#000" />
+                      <Text style={styles.approveBtnText}>Aprovar Pagamento</Text>
+                    </Pressable>
+                  </View>
+                ))
               )}
+            </>
+          )}
+
+          {tab === "users" && (
+            <>
+              <Text style={styles.sectionTitle}>Usuarios ({nonAdminUsers.length})</Text>
+              {nonAdminUsers.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Ionicons name="people-outline" size={36} color={Colors.light.textSecondary} />
+                  <Text style={styles.emptyText}>Nenhum usuario registado</Text>
+                </View>
+              ) : (
+                nonAdminUsers.map((user) => {
+                  const access = checkUserAccess(user);
+                  const statusColor = access.hasAccess
+                    ? (access.isTrial ? Colors.light.pending : Colors.light.primary)
+                    : Colors.light.loss;
+                  const statusLabel = access.hasAccess
+                    ? (access.isTrial ? `Trial (${access.daysLeft}d)` : `Premium (${access.daysLeft}d)`)
+                    : "Sem Acesso";
+                  return (
+                    <View key={user.id} style={styles.userCard}>
+                      <View style={styles.userRow}>
+                        <View style={styles.userAvatar}>
+                          {user.photoUri ? (
+                            <Image source={{ uri: user.photoUri }} style={styles.userAvatarImg} contentFit="cover" />
+                          ) : (
+                            <Ionicons name="person" size={20} color={Colors.light.textSecondary} />
+                          )}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.userName}>{user.displayName}</Text>
+                          <Text style={styles.userUsername}>@{user.username}</Text>
+                        </View>
+                        <View style={[styles.userStatusBadge, { backgroundColor: statusColor + "20" }]}>
+                          <Text style={[styles.userStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.userDetails}>
+                        <View style={styles.userDetailItem}>
+                          <Ionicons name="calendar" size={12} color={Colors.light.textSecondary} />
+                          <Text style={styles.userDetailText}>
+                            Registado: {new Date(user.createdAt).toLocaleDateString("pt")}
+                          </Text>
+                        </View>
+                        <View style={styles.userDetailItem}>
+                          <Ionicons name="card" size={12} color={Colors.light.textSecondary} />
+                          <Text style={styles.userDetailText}>
+                            Pagamento: {
+                              user.subscription.paymentStatus === "approved" ? "Aprovado"
+                              : user.subscription.paymentStatus === "pending" ? "Pendente"
+                              : user.subscription.paymentStatus === "rejected" ? "Rejeitado"
+                              : "Nenhum"
+                            }
+                          </Text>
+                        </View>
+                        {user.subscription.plan !== "none" && user.subscription.plan !== "trial" && (
+                          <View style={styles.userDetailItem}>
+                            <Ionicons name="diamond" size={12} color={Colors.light.premium} />
+                            <Text style={styles.userDetailText}>
+                              Plano: {user.subscription.plan === "7days" ? "7 Dias" : "30 Dias"}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </>
+          )}
+
+          {tab === "comments" && (
+            <>
+              <Text style={styles.sectionTitle}>Comentarios Pendentes ({pendingComments.length})</Text>
+              {pendingComments.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Ionicons name="chatbubbles-outline" size={36} color={Colors.light.textSecondary} />
+                  <Text style={styles.emptyText}>Nenhum comentario pendente</Text>
+                </View>
+              ) : (
+                pendingComments.map((c) => (
+                  <View key={c.id} style={styles.commentCard}>
+                    <View style={styles.commentHeader}>
+                      <Text style={styles.commentUser}>{c.username}</Text>
+                      <Text style={styles.commentDate}>
+                        {new Date(c.date).toLocaleDateString("pt", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </Text>
+                    </View>
+                    <Text style={styles.commentText}>{c.text}</Text>
+                    <View style={styles.commentActions}>
+                      <Pressable
+                        onPress={() => approveComment(c.id)}
+                        style={({ pressed }) => [styles.commentApprove, { opacity: pressed ? 0.7 : 1 }]}
+                      >
+                        <Ionicons name="checkmark" size={16} color={Colors.light.primary} />
+                        <Text style={styles.commentApproveText}>Aprovar</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => deleteComment(c.id)}
+                        style={({ pressed }) => [styles.commentDelete, { opacity: pressed ? 0.7 : 1 }]}
+                      >
+                        <Ionicons name="trash" size={14} color={Colors.light.loss} />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))
+              )}
+
+              <Text style={[styles.sectionTitle, { marginTop: 16 }]}>Todos os Comentarios ({comments.length})</Text>
+              {comments.filter((c) => c.approved).map((c) => (
+                <View key={c.id} style={styles.commentCard}>
+                  <View style={styles.commentHeader}>
+                    <Text style={styles.commentUser}>{c.username}</Text>
+                    <Text style={styles.commentDate}>
+                      {new Date(c.date).toLocaleDateString("pt", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                    </Text>
+                  </View>
+                  <Text style={styles.commentText}>{c.text}</Text>
+                  <View style={styles.commentActions}>
+                    <Pressable
+                      onPress={() => deleteComment(c.id)}
+                      style={({ pressed }) => [styles.commentDelete, { opacity: pressed ? 0.7 : 1 }]}
+                    >
+                      <Ionicons name="trash" size={14} color={Colors.light.loss} />
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
             </>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={showMarketPicker} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Selecionar Mercado</Text>
+              <Pressable onPress={() => setShowMarketPicker(false)}>
+                <Ionicons name="close" size={24} color={Colors.light.text} />
+              </Pressable>
+            </View>
+            <TextInput
+              style={styles.modalSearch}
+              placeholder="Pesquisar mercado..."
+              placeholderTextColor={Colors.light.textSecondary}
+              value={marketSearch}
+              onChangeText={setMarketSearch}
+            />
+            <ScrollView style={styles.marketList} showsVerticalScrollIndicator={false}>
+              {filteredMarkets.map((m) => (
+                <Pressable
+                  key={m}
+                  onPress={() => {
+                    setMarket(m);
+                    setShowMarketPicker(false);
+                    setMarketSearch("");
+                  }}
+                  style={({ pressed }) => [
+                    styles.marketItem,
+                    market === m && styles.marketItemActive,
+                    { opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <Text style={[styles.marketItemText, market === m && styles.marketItemTextActive]}>
+                    {m}
+                  </Text>
+                  {market === m && (
+                    <Ionicons name="checkmark-circle" size={18} color={Colors.light.primary} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -331,24 +551,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   title: {
     fontSize: 22,
     fontFamily: "Inter_700Bold",
     color: Colors.light.text,
   },
+  tabScroll: { marginBottom: 20 },
   tabRow: {
     flexDirection: "row",
     gap: 8,
-    marginBottom: 20,
   },
   tabBtn: {
-    flex: 1,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: Colors.light.card,
+    flexDirection: "row",
     alignItems: "center",
+    gap: 6,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
@@ -365,6 +587,19 @@ const styles = StyleSheet.create({
     color: Colors.light.primary,
     fontFamily: "Inter_600SemiBold",
   },
+  badgeCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.light.loss,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
   sectionTitle: {
     fontSize: 16,
     fontFamily: "Inter_700Bold",
@@ -380,10 +615,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.light.cardBorder,
     gap: 10,
   },
-  inputRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
+  inputRow: { flexDirection: "row", gap: 8 },
   input: {
     flex: 1,
     backgroundColor: Colors.light.inputBg,
@@ -407,11 +639,24 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.light.border,
   },
-  toggleRow: {
+  marketSelector: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    backgroundColor: Colors.light.inputBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
   },
+  marketSelectorText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.text,
+    flex: 1,
+  },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   toggleText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
@@ -431,10 +676,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: "#000",
   },
-  btnRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
+  btnRow: { flexDirection: "row", gap: 8 },
   schedBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -500,26 +742,63 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginLeft: "auto",
   },
-  paymentCard: {
+  emptyCard: {
     backgroundColor: Colors.light.card,
     borderRadius: 14,
-    padding: 16,
+    padding: 30,
+    alignItems: "center",
+    gap: 8,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
-  paymentInfo: {
-    marginBottom: 12,
+  emptyText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
   },
-  paymentPlan: {
-    fontSize: 15,
+  paymentCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    gap: 10,
+  },
+  payUserRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  payUserAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.light.background,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  payUserPhoto: { width: 36, height: 36, borderRadius: 18 },
+  payUserName: {
+    fontSize: 14,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.text,
   },
-  paymentDate: {
-    fontSize: 12,
+  payUserSub: {
+    fontSize: 11,
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
-    marginTop: 4,
+  },
+  payPlan: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.premium,
+  },
+  payProofImage: {
+    width: "100%",
+    height: 200,
+    borderRadius: 10,
   },
   approveBtn: {
     flexDirection: "row",
@@ -535,18 +814,182 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: "#000",
   },
-  emptyPayments: {
+  userCard: {
     backgroundColor: Colors.light.card,
     borderRadius: 14,
-    padding: 30,
-    alignItems: "center",
-    gap: 8,
+    padding: 14,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
-  emptyText: {
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
+  userRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  userAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.light.background,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  userAvatarImg: { width: 40, height: 40, borderRadius: 20 },
+  userName: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  userUsername: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
+  },
+  userStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  userStatusText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+  },
+  userDetails: {
+    backgroundColor: Colors.light.background,
+    borderRadius: 10,
+    padding: 10,
+    gap: 6,
+  },
+  userDetailItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  userDetailText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  commentCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  commentHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  commentUser: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  commentDate: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  commentText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.text,
+    lineHeight: 18,
+  },
+  commentActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+  },
+  commentApprove: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: Colors.light.primary + "20",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  commentApproveText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.primary,
+  },
+  commentDelete: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.light.loss + "15",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: Colors.light.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: "80%",
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+  },
+  modalSearch: {
+    backgroundColor: Colors.light.inputBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.text,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    marginBottom: 10,
+  },
+  marketList: {
+    maxHeight: 400,
+  },
+  marketItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  marketItemActive: {
+    backgroundColor: Colors.light.primary + "10",
+  },
+  marketItemText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.text,
+    flex: 1,
+  },
+  marketItemTextActive: {
+    color: Colors.light.primary,
+    fontFamily: "Inter_600SemiBold",
   },
 });

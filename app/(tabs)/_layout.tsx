@@ -2,7 +2,7 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
 import { NativeTabs, Icon, Label } from "expo-router/unstable-native-tabs";
 import { BlurView } from "expo-blur";
-import { Platform, StyleSheet, View, useColorScheme } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import Colors from "@/constants/colors";
@@ -21,6 +21,10 @@ function NativeTabLayout() {
       <NativeTabs.Trigger name="escala">
         <Icon sf={{ default: "calendar", selected: "calendar.circle.fill" }} />
         <Label>Escala</Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="comentarios">
+        <Icon sf={{ default: "bubble.left", selected: "bubble.left.fill" }} />
+        <Label>Chat</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="historico">
         <Icon sf={{ default: "clock", selected: "clock.fill" }} />
@@ -45,7 +49,7 @@ function ClassicTabLayout() {
         tabBarActiveTintColor: Colors.light.primary,
         tabBarInactiveTintColor: Colors.light.tabIconDefault,
         tabBarStyle: {
-          position: "absolute",
+          position: "absolute" as const,
           backgroundColor: isIOS ? "transparent" : Colors.light.background,
           borderTopWidth: isWeb ? 1 : 0,
           borderTopColor: Colors.light.border,
@@ -88,6 +92,15 @@ function ClassicTabLayout() {
           title: "Escala",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="calendar" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="comentarios"
+        options={{
+          title: "Chat",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="chatbubbles" size={size} color={color} />
           ),
         }}
       />

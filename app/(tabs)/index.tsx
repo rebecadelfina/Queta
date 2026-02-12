@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from "react";
 import {
   StyleSheet, Text, View, ScrollView, RefreshControl,
-  Pressable, Platform,
+  Pressable, Platform, ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -84,10 +84,11 @@ function PredictionCard({ prediction, locked }: { prediction: any; locked: boole
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { predictions, hasAccess, daysLeft, isTrial, isAdmin, loading, refreshAll } = useData();
+  const { currentUser, predictions, hasAccess, daysLeft, isTrial, loading, refreshAll } = useData();
   const [refreshing, setRefreshing] = useState(false);
   const today = getTodayStr();
   const todayPredictions = predictions.filter((p) => p.date === today);
+  const isAdmin = currentUser?.isAdmin ?? false;
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -96,6 +97,23 @@ export default function HomeScreen() {
   }, [refreshAll]);
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color={Colors.light.primary} />
+      </View>
+    );
+  }
+
+  if (!currentUser) {
+    setTimeout(() => router.replace("/login"), 0);
+    return (
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color={Colors.light.primary} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -340,6 +358,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
+    flexShrink: 1,
   },
   marketText: {
     fontSize: 12,

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  StyleSheet, Text, View, ScrollView, Pressable, Platform, Alert,
+  StyleSheet, Text, View, ScrollView, Pressable, Platform, Alert, TextInput, Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -14,10 +14,26 @@ import { useData } from "@/lib/data-context";
 export default function PerfilScreen() {
   const insets = useSafeAreaInsets();
   const {
-    subscription, hasAccess, daysLeft, isTrial, isAdmin,
-    submitPaymentProof, toggleAdmin,
+    currentUser, hasAccess, daysLeft, isTrial,
+    submitPaymentProof, updateProfile, changePassword, logout,
   } = useData();
   const [selectedPlan, setSelectedPlan] = useState<"7days" | "30days">("7days");
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [pwError, setPwError] = useState("");
+
+  if (!currentUser) {
+    return (
+      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+        <Ionicons name="person-outline" size={48} color={Colors.light.textSecondary} />
+        <Text style={styles.emptyText}>Faca login para acessar</Text>
+      </View>
+    );
+  }
+
+  const isAdmin = currentUser.isAdmin;
+  const subscription = currentUser.subscription;
 
   const pickProof = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -27,9 +43,55 @@ export default function PerfilScreen() {
     if (!result.canceled && result.assets[0]) {
       await submitPaymentProof(result.assets[0].uri, selectedPlan);
       if (Platform.OS !== "web") {
-        Alert.alert("Enviado", "Comprovativo enviado com sucesso! Aguarde a aprovacao do administrador.");
+        Alert.alert("Enviado", "Comprovativo enviado! Aguarde a aprovacao.");
       }
     }
+  };
+
+  const pickProfilePhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+      allowsEditing: true,
+      aspect: [1, 1],
+    });
+    if (!result.canceled && result.assets[0]) {
+      await updateProfile({ photoUri: result.assets[0].uri });
+    }
+  };
+
+  const handleChangePassword = async () => {
+    setPwError("");
+    if (!oldPassword || !newPassword) {
+      setPwError("Preencha todos os campos");
+      return;
+    }
+    if (newPassword.length < 4) {
+      setPwError("A nova palavra-passe deve ter pelo menos 4 caracteres");
+      return;
+    }
+    const success = await changePassword(oldPassword, newPassword);
+    if (success) {
+      setShowPasswordModal(false);
+      setOldPassword("");
+      setNewPassword("");
+      if (Platform.OS !== "web") {
+        Alert.alert("Sucesso", "Palavra-passe alterada com sucesso!");
+      }
+    } else {
+      setPwError("Palavra-passe atual incorreta");
+    }
+  };
+
+  const handleLogout = () => {
+    if (Platform.OS === "web") {
+      logout().then(() => router.replace("/login"));
+      return;
+    }
+    Alert.alert("Sair", "Deseja sair da sua conta?", [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Sair", style: "destructive", onPress: () => logout().then(() => router.replace("/login")) },
+    ]);
   };
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
@@ -43,6 +105,23 @@ export default function PerfilScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.title}>Perfil</Text>
+
+        <View style={styles.profileSection}>
+          <Pressable onPress={pickProfilePhoto} style={styles.avatarContainer}>
+            {currentUser.photoUri ? (
+              <Image source={{ uri: currentUser.photoUri }} style={styles.avatar} contentFit="cover" />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Ionicons name="person" size={40} color={Colors.light.textSecondary} />
+              </View>
+            )}
+            <View style={styles.avatarEditBadge}>
+              <Ionicons name="camera" size={14} color="#fff" />
+            </View>
+          </Pressable>
+          <Text style={styles.displayName}>{currentUser.displayName}</Text>
+          <Text style={styles.username}>@{currentUser.username}</Text>
+        </View>
 
         <View style={styles.statusCard}>
           <View style={styles.statusIcon}>
@@ -70,16 +149,24 @@ export default function PerfilScreen() {
           )}
         </View>
 
+        <View style={styles.actionsRow}>
+          <Pressable
+            onPress={() => setShowPasswordModal(true)}
+            style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Ionicons name="key" size={20} color={Colors.light.accent} />
+            <Text style={styles.actionBtnText}>Alterar Palavra-Passe</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.light.textSecondary} />
+          </Pressable>
+        </View>
+
         {!isAdmin && (!hasAccess || isTrial) && subscription?.paymentStatus !== "pending" && (
           <>
             <Text style={styles.sectionTitle}>Planos Premium</Text>
 
             <Pressable
               onPress={() => setSelectedPlan("7days")}
-              style={[
-                styles.planCard,
-                selectedPlan === "7days" && styles.planCardActive,
-              ]}
+              style={[styles.planCard, selectedPlan === "7days" && styles.planCardActive]}
             >
               <View style={styles.planTop}>
                 <Ionicons name="diamond" size={20} color={Colors.light.premium} />
@@ -96,10 +183,7 @@ export default function PerfilScreen() {
 
             <Pressable
               onPress={() => setSelectedPlan("30days")}
-              style={[
-                styles.planCard,
-                selectedPlan === "30days" && styles.planCardActive,
-              ]}
+              style={[styles.planCard, selectedPlan === "30days" && styles.planCardActive]}
             >
               <View style={styles.planTop}>
                 <Ionicons name="diamond" size={20} color={Colors.light.premium} />
@@ -120,28 +204,16 @@ export default function PerfilScreen() {
             <View style={styles.paymentInfo}>
               <Text style={styles.paymentTitle}>Como Pagar</Text>
               <View style={styles.paymentStep}>
-                <View style={styles.stepNumber}>
-                  <Text style={styles.stepNumberText}>1</Text>
-                </View>
-                <Text style={styles.paymentStepText}>
-                  Faca a transferencia bancaria ou pagamento por Multicaixa Express (EMIS)
-                </Text>
+                <View style={styles.stepNumber}><Text style={styles.stepNumberText}>1</Text></View>
+                <Text style={styles.paymentStepText}>Faca transferencia bancaria ou Multicaixa Express (EMIS)</Text>
               </View>
               <View style={styles.paymentStep}>
-                <View style={styles.stepNumber}>
-                  <Text style={styles.stepNumberText}>2</Text>
-                </View>
-                <Text style={styles.paymentStepText}>
-                  Envie o comprovativo clicando no botao abaixo
-                </Text>
+                <View style={styles.stepNumber}><Text style={styles.stepNumberText}>2</Text></View>
+                <Text style={styles.paymentStepText}>Envie o comprovativo clicando no botao abaixo</Text>
               </View>
               <View style={styles.paymentStep}>
-                <View style={styles.stepNumber}>
-                  <Text style={styles.stepNumberText}>3</Text>
-                </View>
-                <Text style={styles.paymentStepText}>
-                  Aguarde a confirmacao do administrador para desbloquear
-                </Text>
+                <View style={styles.stepNumber}><Text style={styles.stepNumberText}>3</Text></View>
+                <Text style={styles.paymentStepText}>Aguarde a confirmacao do administrador</Text>
               </View>
             </View>
 
@@ -177,37 +249,24 @@ export default function PerfilScreen() {
               ]}>
                 <Ionicons
                   name={
-                    subscription.paymentStatus === "approved"
-                      ? "checkmark-circle"
-                      : subscription.paymentStatus === "pending"
-                      ? "time"
-                      : "close-circle"
+                    subscription.paymentStatus === "approved" ? "checkmark-circle"
+                      : subscription.paymentStatus === "pending" ? "time" : "close-circle"
                   }
                   size={14}
                   color={
-                    subscription.paymentStatus === "approved"
-                      ? Colors.light.win
-                      : subscription.paymentStatus === "pending"
-                      ? Colors.light.pending
-                      : Colors.light.loss
+                    subscription.paymentStatus === "approved" ? Colors.light.win
+                      : subscription.paymentStatus === "pending" ? Colors.light.pending : Colors.light.loss
                   }
                 />
                 <Text style={[
                   styles.proofStatusText,
                   {
-                    color:
-                      subscription.paymentStatus === "approved"
-                        ? Colors.light.win
-                        : subscription.paymentStatus === "pending"
-                        ? Colors.light.pending
-                        : Colors.light.loss,
+                    color: subscription.paymentStatus === "approved" ? Colors.light.win
+                      : subscription.paymentStatus === "pending" ? Colors.light.pending : Colors.light.loss,
                   },
                 ]}>
-                  {subscription.paymentStatus === "approved"
-                    ? "Aprovado"
-                    : subscription.paymentStatus === "pending"
-                    ? "Em Analise"
-                    : "Rejeitado"}
+                  {subscription.paymentStatus === "approved" ? "Aprovado"
+                    : subscription.paymentStatus === "pending" ? "Em Analise" : "Rejeitado"}
                 </Text>
               </View>
             </View>
@@ -216,28 +275,63 @@ export default function PerfilScreen() {
 
         <View style={styles.divider} />
 
-        <Pressable
-          onPress={toggleAdmin}
-          style={({ pressed }) => [styles.adminToggle, { opacity: pressed ? 0.7 : 1 }]}
-        >
-          <Ionicons name={isAdmin ? "person" : "shield"} size={20} color={Colors.light.primary} />
-          <Text style={styles.adminToggleText}>
-            {isAdmin ? "Modo Usuario" : "Modo Administrador"}
-          </Text>
-          <Ionicons name="chevron-forward" size={16} color={Colors.light.textSecondary} />
-        </Pressable>
-
         {isAdmin && (
           <Pressable
             onPress={() => router.push("/admin")}
-            style={({ pressed }) => [styles.adminToggle, { opacity: pressed ? 0.7 : 1, marginTop: 8 }]}
+            style={({ pressed }) => [styles.actionBtn, { opacity: pressed ? 0.7 : 1 }]}
           >
             <Ionicons name="settings" size={20} color={Colors.light.accent} />
-            <Text style={styles.adminToggleText}>Painel de Administracao</Text>
+            <Text style={styles.actionBtnText}>Painel de Administracao</Text>
             <Ionicons name="chevron-forward" size={16} color={Colors.light.textSecondary} />
           </Pressable>
         )}
+
+        <Pressable
+          onPress={handleLogout}
+          style={({ pressed }) => [styles.logoutBtn, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Ionicons name="log-out" size={20} color={Colors.light.loss} />
+          <Text style={styles.logoutText}>Sair da Conta</Text>
+        </Pressable>
       </ScrollView>
+
+      <Modal visible={showPasswordModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Alterar Palavra-Passe</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Palavra-passe atual"
+              placeholderTextColor={Colors.light.textSecondary}
+              value={oldPassword}
+              onChangeText={setOldPassword}
+              secureTextEntry
+            />
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Nova palavra-passe"
+              placeholderTextColor={Colors.light.textSecondary}
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+            />
+            {!!pwError && (
+              <Text style={styles.modalError}>{pwError}</Text>
+            )}
+            <View style={styles.modalBtns}>
+              <Pressable
+                onPress={() => { setShowPasswordModal(false); setOldPassword(""); setNewPassword(""); setPwError(""); }}
+                style={styles.modalCancel}
+              >
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </Pressable>
+              <Pressable onPress={handleChangePassword} style={styles.modalConfirm}>
+                <Text style={styles.modalConfirmText}>Confirmar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -250,14 +344,68 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontFamily: "Inter_700Bold",
     color: Colors.light.text,
+    marginBottom: 16,
+  },
+  profileSection: {
+    alignItems: "center",
     marginBottom: 20,
+  },
+  avatarContainer: {
+    marginBottom: 12,
+  },
+  avatar: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    borderWidth: 3,
+    borderColor: Colors.light.primary + "40",
+  },
+  avatarPlaceholder: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: Colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: Colors.light.cardBorder,
+  },
+  avatarEditBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.light.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: Colors.light.background,
+  },
+  displayName: {
+    fontSize: 20,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+  },
+  username: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    marginTop: 2,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
+    marginTop: 8,
   },
   statusCard: {
     backgroundColor: Colors.light.card,
     borderRadius: 16,
     padding: 24,
     alignItems: "center",
-    marginBottom: 24,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
@@ -296,6 +444,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_500Medium",
     color: Colors.light.pending,
+  },
+  actionsRow: { marginBottom: 16 },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+    marginBottom: 8,
+  },
+  actionBtnText: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.text,
   },
   sectionTitle: {
     fontSize: 16,
@@ -408,9 +574,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: "#000",
   },
-  proofSection: {
-    marginBottom: 16,
-  },
+  proofSection: { marginBottom: 16 },
   proofCard: {
     backgroundColor: Colors.light.card,
     borderRadius: 14,
@@ -436,22 +600,89 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: Colors.light.border,
-    marginVertical: 20,
+    marginVertical: 16,
   },
-  adminToggle: {
+  logoutBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    backgroundColor: Colors.light.card,
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: Colors.light.loss + "15",
     borderRadius: 12,
-    padding: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: Colors.light.loss + "30",
+    marginTop: 8,
+  },
+  logoutText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.loss,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 16,
+    padding: 20,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
-  adminToggleText: {
+  modalTitle: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+    marginBottom: 16,
+  },
+  modalInput: {
+    backgroundColor: Colors.light.inputBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.text,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    marginBottom: 10,
+  },
+  modalError: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.loss,
+    marginBottom: 8,
+  },
+  modalBtns: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+  },
+  modalCancel: {
     flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: Colors.light.background,
+  },
+  modalCancelText: {
     fontSize: 14,
     fontFamily: "Inter_500Medium",
-    color: Colors.light.text,
+    color: Colors.light.textSecondary,
+  },
+  modalConfirm: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: Colors.light.primary,
+  },
+  modalConfirmText: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: "#000",
   },
 });

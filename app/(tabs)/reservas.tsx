@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   StyleSheet, Text, View, ScrollView, Pressable, RefreshControl,
   Platform, Alert, Dimensions,
@@ -12,12 +12,26 @@ import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 
 const { width } = Dimensions.get("window");
-const IMAGE_WIDTH = width - 48;
 
-function ReservationSection({ house, color }: { house: "bantubet" | "elephantebet"; color: string }) {
-  const { reservations, addReservation, deleteReservation, isAdmin } = useData();
-  const houseReservations = reservations.filter((r) => r.house === house);
+function ReservationSection({ house, color, showHistory }: { house: "bantubet" | "elephantebet"; color: string; showHistory: boolean }) {
+  const { reservations, addReservation, publishReservation, deleteReservation, currentUser, hasAccess } = useData();
+  const isAdmin = currentUser?.isAdmin ?? false;
   const houseName = house === "bantubet" ? "BantuBet" : "ElephanteBet";
+
+  const houseReservations = useMemo(() => {
+    const all = reservations.filter((r) => r.house === house);
+    if (isAdmin) return all;
+    return all.filter((r) => r.published);
+  }, [reservations, house, isAdmin]);
+
+  const today = new Date().toISOString().split("T")[0];
+  const displayed = useMemo(() => {
+    if (showHistory) return houseReservations;
+    return houseReservations.filter((r) => {
+      const rDate = r.date.split("T")[0];
+      return rDate === today;
+    });
+  }, [houseReservations, showHistory, today]);
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -29,8 +43,13 @@ function ReservationSection({ house, color }: { house: "bantubet" | "elephantebe
         house,
         imageUri: result.assets[0].uri,
         date: new Date().toISOString(),
+        published: false,
       });
     }
+  };
+
+  const handlePublish = (id: string) => {
+    publishReservation(id);
   };
 
   const handleDelete = (id: string) => {
@@ -54,34 +73,63 @@ function ReservationSection({ house, color }: { house: "bantubet" | "elephantebe
         {isAdmin && (
           <Pressable
             onPress={pickImage}
-            style={({ pressed }) => [styles.addBtn, { backgroundColor: color + "20", opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [styles.addImageBtn, { backgroundColor: color + "20", opacity: pressed ? 0.7 : 1 }]}
           >
             <Ionicons name="add" size={20} color={color} />
           </Pressable>
         )}
       </View>
 
-      {houseReservations.length === 0 ? (
+      {!hasAccess && !isAdmin ? (
+        <View style={styles.lockedSection}>
+          <Ionicons name="lock-closed" size={28} color={Colors.light.textSecondary} />
+          <Text style={styles.lockedText}>Conteudo exclusivo para Premium</Text>
+        </View>
+      ) : displayed.length === 0 ? (
         <View style={styles.emptySection}>
           <Ionicons name="image-outline" size={36} color={Colors.light.textSecondary} />
-          <Text style={styles.emptyText}>Nenhuma reserva disponivel</Text>
+          <Text style={styles.emptyText}>
+            {showHistory ? "Nenhuma reserva no historico" : "Nenhuma reserva disponivel hoje"}
+          </Text>
         </View>
       ) : (
-        houseReservations.map((r) => (
+        displayed.sort((a, b) => b.date.localeCompare(a.date)).map((r) => (
           <View key={r.id} style={styles.imageContainer}>
+            {!r.published && isAdmin && (
+              <View style={styles.draftBanner}>
+                <Ionicons name="eye-off" size={12} color={Colors.light.pending} />
+                <Text style={styles.draftText}>Rascunho - Nao publicado</Text>
+              </View>
+            )}
             <Image
               source={{ uri: r.imageUri }}
               style={styles.reservationImage}
               contentFit="contain"
             />
-            {isAdmin && (
-              <Pressable
-                onPress={() => handleDelete(r.id)}
-                style={({ pressed }) => [styles.deleteBtn, { opacity: pressed ? 0.7 : 1 }]}
-              >
-                <Ionicons name="trash" size={16} color={Colors.light.loss} />
-              </Pressable>
-            )}
+            <View style={styles.imageFooter}>
+              <Text style={styles.imageDate}>
+                {new Date(r.date).toLocaleDateString("pt", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </Text>
+              {isAdmin && (
+                <View style={styles.imageActions}>
+                  {!r.published && (
+                    <Pressable
+                      onPress={() => handlePublish(r.id)}
+                      style={({ pressed }) => [styles.publishBtn, { opacity: pressed ? 0.7 : 1 }]}
+                    >
+                      <Ionicons name="paper-plane" size={14} color={Colors.light.primary} />
+                      <Text style={styles.publishText}>Publicar</Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={() => handleDelete(r.id)}
+                    style={({ pressed }) => [styles.deleteBtn, { opacity: pressed ? 0.7 : 1 }]}
+                  >
+                    <Ionicons name="trash" size={14} color={Colors.light.loss} />
+                  </Pressable>
+                </View>
+              )}
+            </View>
           </View>
         ))
       )}
@@ -93,6 +141,7 @@ export default function ReservasScreen() {
   const insets = useSafeAreaInsets();
   const { refreshAll } = useData();
   const [refreshing, setRefreshing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -114,8 +163,25 @@ export default function ReservasScreen() {
         <Text style={styles.title}>Reservas</Text>
         <Text style={styles.subtitle}>Fichas de reserva das casas de apostas</Text>
 
-        <ReservationSection house="bantubet" color={Colors.light.bantubet} />
-        <ReservationSection house="elephantebet" color={Colors.light.elephantebet} />
+        <View style={styles.viewToggle}>
+          <Pressable
+            onPress={() => setShowHistory(false)}
+            style={[styles.toggleBtn, !showHistory && styles.toggleBtnActive]}
+          >
+            <Ionicons name="today" size={14} color={!showHistory ? Colors.light.primary : Colors.light.textSecondary} />
+            <Text style={[styles.toggleText, !showHistory && styles.toggleTextActive]}>Hoje</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setShowHistory(true)}
+            style={[styles.toggleBtn, showHistory && styles.toggleBtnActive]}
+          >
+            <Ionicons name="time" size={14} color={showHistory ? Colors.light.primary : Colors.light.textSecondary} />
+            <Text style={[styles.toggleText, showHistory && styles.toggleTextActive]}>Historico</Text>
+          </Pressable>
+        </View>
+
+        <ReservationSection house="bantubet" color={Colors.light.bantubet} showHistory={showHistory} />
+        <ReservationSection house="elephantebet" color={Colors.light.elephantebet} showHistory={showHistory} />
       </ScrollView>
     </View>
   );
@@ -135,7 +201,37 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
     marginTop: 2,
+    marginBottom: 16,
+  },
+  viewToggle: {
+    flexDirection: "row",
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: 3,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  toggleBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  toggleBtnActive: {
+    backgroundColor: Colors.light.primary + "20",
+  },
+  toggleText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
+  },
+  toggleTextActive: {
+    color: Colors.light.primary,
+    fontFamily: "Inter_600SemiBold",
   },
   section: {
     marginBottom: 24,
@@ -158,12 +254,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: "Inter_700Bold",
   },
-  addBtn: {
+  addImageBtn: {
     width: 36,
     height: 36,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  lockedSection: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 14,
+    padding: 30,
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  lockedText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
   },
   emptySection: {
     backgroundColor: Colors.light.card,
@@ -188,22 +298,60 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
   },
+  draftBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: Colors.light.pending + "15",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  draftText: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.pending,
+  },
   reservationImage: {
     width: "100%",
     height: 300,
-    borderRadius: 14,
+  },
+  imageFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  imageDate: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+  },
+  imageActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  publishBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: Colors.light.primary + "20",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  publishText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.primary,
   },
   deleteBtn: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    backgroundColor: Colors.light.card,
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: Colors.light.loss + "40",
+    backgroundColor: Colors.light.loss + "15",
   },
 });
