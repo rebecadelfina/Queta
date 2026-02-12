@@ -113,7 +113,7 @@ export default function HomeScreen() {
       >
         <View style={styles.header}>
           <View>
-            <Text style={styles.title}>ProTips AO</Text>
+            <Text style={styles.title}>QUETABET BEST</Text>
             <Text style={styles.subtitle}>Prognosticos do Dia</Text>
           </View>
           <View style={styles.headerRight}>

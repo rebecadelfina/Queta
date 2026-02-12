@@ -1,0 +1,130 @@
+Equipa de casa ganha 
+
+Equipa de fora ganha 
+
+Empate no jogo completo 
+
+Equipa de casa ganha no HT e no Final
+
+Equipa de fora ganha no HT e no Final
+
+Mais de 2 golos no jogo
+
+Mais de +2.5 golos no jogo
+
+Menos de 3.5 golos no jogo
+
+Menos de 4.5 golos no jogo
+
+Faixa de golo de  2–6 no jogo
+
+Faixa de golo 1–6 no jogo
+
+Qualquer uma ganha e Faixa de golo de 2–6 no jogo 
+
+Qualquer uma ganha e menos de 4.5 golo no jogo
+
+Equipa de casa ganha ou empata e Faixa de 2- 6 golos no jogo 
+
+Equipa de fora ganha ou empata e Faixa de de golo de 2 - 6 no jogo 
+
+Total de golo no jogo acima de 1.5 
+
+Total de golo no jogo acima de 2.5 
+
+Equipa de fora ganha ou empata 
+
+Equipa de casa ganha ou empata 
+
+Qualquer uma ganha 
+
+Equipa de casa ganha ou empata e acima de 1.5 golo no jogo 
+
+Equipa de fora ganha ou empata e acima de 1.5 golo no jogo 
+
+Equipa de casa ganha ou empata e abaixo de 4.5 golo no jogo 
+
+Equipa de fora ganha ou empata e abaixo de 4.5 golo no jogo 
+
+Qualquer uma ganha e abaixo de 4.5 golo no jogo 
+
+Ambas marcam
+
+Equipa de casa marca mais de 0.5
+
+Equipa de casa marca mais 1.5
+
+Equipa de fora  marca mais de 0.5
+
+Equipa de fora marca mais de 1.5
+
+Casa ganha pelo menos uma parte
+
+Fora ganha pelo menos uma parte
+
+Empate em pelo menos uma parte
+
+Handicap +2.5 a favor da equipa de casa
+
+Handicap +2.5 a favor da equipa de fora
+
+Ambas equipas levam cartões
+
+Equipa de casa ganha sem sofrer
+
+Equipa de fora ganha sem sofrer
+
+Remate no alvo equipa de casa
+
+Remate no alvo equipa de fora
+
+Tota de canto no jogo 
+
+Combinações de resultados exatos
+
+Mercado Milionário 
+
+Alcance de golo acima de 7 golos no jogo
+
+Alcance de cantos de 5 ou menos no jogo
+
+Alcance de cantos de 6 - 8 no jogo
+
+Alcance de cantos de 9 - 11 no jogo
+
+Alcance de cantos de 12 - 14 no jogo
+
+Alcance de cantos de 15 ou mais no jogo
+
+Primeiro tempo abaixo de 1.5 golos
+
+Primeiro tempo abaixo de 2.5 golos
+
+Primeiro tempo acima de 1.5 golos
+
+Primeiro tempo acima de 2.5 golos no jogo 
+
+Segundo tempo acima de 1.5 golos
+
+Segundo tempo acima de 2.5 golos no jogo 
+
+Segundo tempo abaixo de 1.5 golos
+
+Segundo tempo abaixo de 2.5 golos
+
+Equipa de casa empate anula aposta
+
+Equipa de fora empate anula aposta 
+
+
+Total de remate à baliza da equipa de casa
+
+Total de remate à baliza da equipa de fora
+
+Total de golos (faixa de golos) 4 a 6
+
+Total de golos (faixa de golos) 7 ou mais
+
+Equipa de casa ganha total de canto no jogo
+
+Equipa de fora ganha total de canto no jogo
