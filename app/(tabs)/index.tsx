@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet, Text, View, ScrollView, RefreshControl,
   Pressable, Platform, ActivityIndicator,
@@ -98,16 +98,13 @@ export default function HomeScreen() {
 
   const topInset = Platform.OS === "web" ? 67 : insets.top;
 
-  if (loading) {
-    return (
-      <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
-        <ActivityIndicator size="large" color={Colors.light.primary} />
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!loading && !currentUser) {
+      router.replace("/login");
+    }
+  }, [loading, currentUser]);
 
-  if (!currentUser) {
-    setTimeout(() => router.replace("/login"), 0);
+  if (loading || !currentUser) {
     return (
       <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
         <ActivityIndicator size="large" color={Colors.light.primary} />
