@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import {
   StyleSheet, Text, View, ScrollView, Pressable, TextInput,
-  Platform, Alert, KeyboardAvoidingView, Modal,
+  Platform, KeyboardAvoidingView, Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,6 +11,7 @@ import { router } from "expo-router";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 import { getTodayStr, MARKETS, checkUserAccess } from "@/lib/storage";
+import { AdminPaymentManager } from "@/components/AdminPaymentManager";
 
 type TabType = "predictions" | "scale" | "payments" | "users" | "comments";
 
@@ -18,7 +19,7 @@ export default function AdminScreen() {
   const insets = useSafeAreaInsets();
   const {
     currentUser, predictions, comments, allUsers,
-    addPrediction, updatePrediction, deletePrediction,
+    updatePrediction, deletePrediction, addPrediction,
     scaleEntries, addScaleEntry,
     approveUserSubscription,
     approveComment, deleteComment,
@@ -27,18 +28,21 @@ export default function AdminScreen() {
   const [tab, setTab] = useState<TabType>("predictions");
   const [showMarketPicker, setShowMarketPicker] = useState(false);
 
+  const [market, setMarket] = useState("");
+  const [marketSearch, setMarketSearch] = useState("");
+
   const [homeTeam, setHomeTeam] = useState("");
   const [awayTeam, setAwayTeam] = useState("");
   const [league, setLeague] = useState("");
   const [matchTime, setMatchTime] = useState("");
-  const [market, setMarket] = useState("");
   const [odd, setOdd] = useState("");
   const [isPremium, setIsPremium] = useState(false);
-  const [marketSearch, setMarketSearch] = useState("");
 
   const [scaleOddValue, setScaleOddValue] = useState("");
   const [scaleOddLabel, setScaleOddLabel] = useState("");
   const [scaleDate, setScaleDate] = useState(getTodayStr());
+
+
 
   const isAdmin = currentUser?.isAdmin ?? false;
 
@@ -60,19 +64,24 @@ export default function AdminScreen() {
   const nonAdminUsers = allUsers.filter((u) => !u.isAdmin);
 
   const handleAddPrediction = async () => {
-    if (!homeTeam || !awayTeam || !league || !matchTime || !market || !odd) {
-      if (Platform.OS !== "web") Alert.alert("Erro", "Preencha todos os campos");
-      return;
-    }
+    if (!market || !homeTeam || !awayTeam || !league || !matchTime || !odd) return;
     await addPrediction({
-      homeTeam, awayTeam, league, matchTime, market,
+      homeTeam: homeTeam.trim(),
+      awayTeam: awayTeam.trim(),
+      league: league.trim(),
+      matchTime,
+      market,
       odd: parseFloat(odd),
       result: "pending",
       isPremium,
       date: getTodayStr(),
     });
-    setHomeTeam(""); setAwayTeam(""); setLeague(""); setMatchTime("");
-    setMarket(""); setOdd(""); setIsPremium(false);
+    setHomeTeam("");
+    setAwayTeam("");
+    setLeague("");
+    setMatchTime("");
+    setOdd("");
+    setIsPremium(false);
   };
 
   const handleAddScaleOdd = async () => {
@@ -131,6 +140,22 @@ export default function AdminScreen() {
             <Text style={styles.title}>Painel Admin</Text>
           </View>
 
+          {pendingPayments.length > 0 && (
+            <View style={styles.alertBanner}>
+              <LinearGradient
+                colors={[Colors.light.pending + "25", Colors.light.pending + "10"]}
+                style={styles.alertBannerGradient}
+              >
+                <Ionicons name="alert-circle" size={18} color={Colors.light.pending} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>{pendingPayments.length} Pagamento(s) Pendente(s)</Text>
+                  <Text style={styles.alertSub}>Clique na aba &quot;Pag.&quot; para revisar e aprovar</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.light.pending} />
+              </LinearGradient>
+            </View>
+          )}
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll}>
             <View style={styles.tabRow}>
               {tabs.map((t) => (
@@ -154,48 +179,8 @@ export default function AdminScreen() {
 
           {tab === "predictions" && (
             <>
-              <Text style={styles.sectionTitle}>Adicionar Prognostico</Text>
+              <Text style={styles.sectionTitle}>Adicionar Nova Dica</Text>
               <View style={styles.formCard}>
-                <View style={styles.inputRow}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Equipa Casa"
-                    placeholderTextColor={Colors.light.textSecondary}
-                    value={homeTeam}
-                    onChangeText={setHomeTeam}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Equipa Fora"
-                    placeholderTextColor={Colors.light.textSecondary}
-                    value={awayTeam}
-                    onChangeText={setAwayTeam}
-                  />
-                </View>
-                <TextInput
-                  style={styles.inputFull}
-                  placeholder="Liga (ex: Premier League)"
-                  placeholderTextColor={Colors.light.textSecondary}
-                  value={league}
-                  onChangeText={setLeague}
-                />
-                <View style={styles.inputRow}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Hora (ex: 16:30)"
-                    placeholderTextColor={Colors.light.textSecondary}
-                    value={matchTime}
-                    onChangeText={setMatchTime}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Odd"
-                    placeholderTextColor={Colors.light.textSecondary}
-                    value={odd}
-                    onChangeText={setOdd}
-                    keyboardType="numeric"
-                  />
-                </View>
                 <Pressable
                   onPress={() => setShowMarketPicker(true)}
                   style={styles.marketSelector}
@@ -205,25 +190,68 @@ export default function AdminScreen() {
                   </Text>
                   <Ionicons name="chevron-down" size={16} color={Colors.light.textSecondary} />
                 </Pressable>
-                <Pressable
-                  onPress={() => setIsPremium(!isPremium)}
-                  style={styles.toggleRow}
-                >
-                  <Ionicons
-                    name={isPremium ? "checkbox" : "square-outline"}
-                    size={22}
-                    color={isPremium ? Colors.light.premium : Colors.light.textSecondary}
-                  />
-                  <Text style={styles.toggleText}>Prognostico Premium</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleAddPrediction}
-                  style={({ pressed }) => [styles.addBtn, { opacity: pressed ? 0.8 : 1 }]}
-                >
-                  <Ionicons name="add-circle" size={18} color="#000" />
-                  <Text style={styles.addBtnText}>Adicionar</Text>
-                </Pressable>
               </View>
+
+              {market && (
+                <View style={styles.formCard}>
+                  <TextInput
+                    style={styles.inputFull}
+                    placeholder="Equipa de Casa"
+                    placeholderTextColor={Colors.light.textSecondary}
+                    value={homeTeam}
+                    onChangeText={setHomeTeam}
+                  />
+                  <TextInput
+                    style={styles.inputFull}
+                    placeholder="Equipa de Fora"
+                    placeholderTextColor={Colors.light.textSecondary}
+                    value={awayTeam}
+                    onChangeText={setAwayTeam}
+                  />
+                  <TextInput
+                    style={styles.inputFull}
+                    placeholder="Liga (ex: Premier League)"
+                    placeholderTextColor={Colors.light.textSecondary}
+                    value={league}
+                    onChangeText={setLeague}
+                  />
+                  <TextInput
+                    style={styles.inputFull}
+                    placeholder="Hora (HH:MM)"
+                    placeholderTextColor={Colors.light.textSecondary}
+                    value={matchTime}
+                    onChangeText={setMatchTime}
+                  />
+                  <TextInput
+                    style={styles.inputFull}
+                    placeholder="Odd (ex: 1.85)"
+                    placeholderTextColor={Colors.light.textSecondary}
+                    value={odd}
+                    onChangeText={setOdd}
+                    keyboardType="decimal-pad"
+                  />
+                  <Pressable
+                    onPress={() => setIsPremium(!isPremium)}
+                    style={styles.checkboxRow}
+                  >
+                    <Ionicons
+                      name={isPremium ? "checkbox" : "square-outline"}
+                      size={20}
+                      color={isPremium ? Colors.light.primary : Colors.light.textSecondary}
+                    />
+                    <Text style={[styles.checkboxLabel, isPremium && { color: Colors.light.primary }]}>
+                      Dica Premium
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleAddPrediction}
+                    style={({ pressed }) => [styles.addBtn, { opacity: pressed ? 0.8 : 1 }]}
+                  >
+                    <Ionicons name="add-circle" size={18} color="#000" />
+                    <Text style={styles.addBtnText}>Adicionar Dica</Text>
+                  </Pressable>
+                </View>
+              )}
 
               <Text style={styles.sectionTitle}>Jogos de Hoje ({todayPredictions.length})</Text>
               {todayPredictions.map((p) => (
@@ -319,50 +347,11 @@ export default function AdminScreen() {
           )}
 
           {tab === "payments" && (
-            <>
-              <Text style={styles.sectionTitle}>Pagamentos Pendentes ({pendingPayments.length})</Text>
-              {pendingPayments.length === 0 ? (
-                <View style={styles.emptyCard}>
-                  <Ionicons name="card-outline" size={36} color={Colors.light.textSecondary} />
-                  <Text style={styles.emptyText}>Nenhum pagamento pendente</Text>
-                </View>
-              ) : (
-                pendingPayments.map((user) => (
-                  <View key={user.id} style={styles.paymentCard}>
-                    <View style={styles.payUserRow}>
-                      <View style={styles.payUserAvatar}>
-                        {user.photoUri ? (
-                          <Image source={{ uri: user.photoUri }} style={styles.payUserPhoto} contentFit="cover" />
-                        ) : (
-                          <Ionicons name="person" size={16} color={Colors.light.textSecondary} />
-                        )}
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.payUserName}>{user.displayName}</Text>
-                        <Text style={styles.payUserSub}>@{user.username}</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.payPlan}>
-                      Plano: {user.subscription.plan === "7days" ? "7 Dias (2.000 Kz)" : "30 Dias (5.000 Kz)"}
-                    </Text>
-                    {user.subscription.paymentProofUri && (
-                      <Image
-                        source={{ uri: user.subscription.paymentProofUri }}
-                        style={styles.payProofImage}
-                        contentFit="contain"
-                      />
-                    )}
-                    <Pressable
-                      onPress={() => approveUserSubscription(user.id)}
-                      style={({ pressed }) => [styles.approveBtn, { opacity: pressed ? 0.8 : 1 }]}
-                    >
-                      <Ionicons name="checkmark-circle" size={18} color="#000" />
-                      <Text style={styles.approveBtnText}>Aprovar Pagamento</Text>
-                    </Pressable>
-                  </View>
-                ))
-              )}
-            </>
+            <AdminPaymentManager 
+              onPaymentApproved={(userId) => {
+                console.log("Pagamento aprovado por admin:", userId);
+              }}
+            />
           )}
 
           {tab === "users" && (
@@ -493,6 +482,8 @@ export default function AdminScreen() {
               ))}
             </>
           )}
+
+
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -991,5 +982,199 @@ const styles = StyleSheet.create({
   marketItemTextActive: {
     color: Colors.light.primary,
     fontFamily: "Inter_600SemiBold",
+  },
+
+  // Alert Banner
+  alertBanner: {
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  alertBannerGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.light.pending + "30",
+  },
+  alertTitle: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.pending,
+  },
+  alertSub: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.pending + "cc",
+    marginTop: 2,
+  },
+
+  // Payment Card Enhancements
+  paymentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  paymentIndexBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paymentIndexText: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    color: "#000",
+  },
+  paymentDetails: {
+    backgroundColor: Colors.light.background,
+    borderRadius: 10,
+    padding: 10,
+    marginVertical: 8,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  payProofLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+  },
+  approveBtnGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  approveGradientBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
+  },
+
+  // Empty Card Enhancement
+  emptyCardGradient: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.light.win + "20",
+  },
+  emptySubtext: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+    textAlign: "center",
+  },
+
+  // Team & Market Config Styles
+  teamConfigCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  teamConfigHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  teamConfigName: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  marketConfigCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  marketConfigHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  marketTeamCount: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+  },
+  selectedMarketCard: {
+    backgroundColor: Colors.light.card,
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: Colors.light.primary + "40",
+  },
+  selectedMarketTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+    marginBottom: 4,
+  },
+  selectedMarketSub: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.light.textSecondary,
+    marginBottom: 12,
+  },
+  teamToggleItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginVertical: 4,
+    borderRadius: 8,
+    backgroundColor: Colors.light.background,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  teamToggleText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.text,
+  },
+  label: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+    marginBottom: 10,
+  },
+  checkboxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 0,
+  },
+  checkboxLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
   },
 });

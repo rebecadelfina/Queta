@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import {
-  StyleSheet, Text, View, ScrollView, RefreshControl, Pressable, Platform,
+  StyleSheet, Text, View, ScrollView, RefreshControl, Pressable, Platform, Image,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -8,8 +8,49 @@ import { LinearGradient } from "expo-linear-gradient";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 import { formatDate, getTodayStr } from "@/lib/storage";
+import { getTeamLogo } from "@/lib/team-logos";
 
 type FilterType = "all" | "win" | "loss";
+
+function TeamBadge({ teamName, size = "small" }: { teamName: string; size?: "small" | "large" }) {
+  const [state, setState] = useState<{ logoUrl: string | null; initials: string; color: string } | null>(null);
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+    getTeamLogo(teamName).then((result) => {
+      setState(result);
+    });
+  }, [teamName]);
+
+  if (!state) {
+    return (
+      <View style={size === "large" ? styles.teamLogoPlaceholderLarge : styles.teamLogoPlaceholder}>
+        <Ionicons name="shield" size={size === "large" ? 24 : 14} color={Colors.light.textSecondary} />
+      </View>
+    );
+  }
+
+  // If we have a logo URL and no error, try to display it
+  if (state.logoUrl && !imageError) {
+    return (
+      <Image
+        source={{ uri: state.logoUrl }}
+        style={size === "large" ? styles.teamLogoLarge : styles.teamLogo}
+        onError={() => {
+          setImageError(true);
+        }}
+      />
+    );
+  }
+
+  // Fallback: show initials in a colored circle
+  return (
+    <View style={[size === "large" ? styles.teamInitialsBadgeLarge : styles.teamInitialsBadge, { backgroundColor: state.color }]}>
+      <Text style={size === "large" ? styles.teamInitialsLarge : styles.teamInitials}>{state.initials}</Text>
+    </View>
+  );
+}
 
 export default function HistoricoScreen() {
   const insets = useSafeAreaInsets();
@@ -118,9 +159,15 @@ export default function HistoricoScreen() {
                     ]} />
                   </View>
                   <View style={styles.teamsRow}>
-                    <Text style={styles.teamText}>{p.homeTeam}</Text>
+                    <View style={styles.teamColumn}>
+                      <TeamBadge teamName={p.homeTeam} size="large" />
+                      <Text style={styles.teamText} numberOfLines={2}>{p.homeTeam}</Text>
+                    </View>
                     <Text style={styles.vsText}>vs</Text>
-                    <Text style={styles.teamText}>{p.awayTeam}</Text>
+                    <View style={styles.teamColumn}>
+                      <TeamBadge teamName={p.awayTeam} size="large" />
+                      <Text style={styles.teamText} numberOfLines={2}>{p.awayTeam}</Text>
+                    </View>
                   </View>
                   <View style={styles.cardBottom}>
                     <View style={styles.marketTag}>
@@ -326,5 +373,64 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.textSecondary,
+  },
+  teamLogo: {
+    width: 20,
+    height: 20,
+    resizeMode: "contain",
+  },
+  teamLogoLarge: {
+    width: 36,
+    height: 36,
+    resizeMode: "contain",
+  },
+  teamLogoPlaceholder: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: Colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  teamLogoPlaceholderLarge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+  },
+  teamColumn: {
+    alignItems: "center",
+    flex: 1,
+    gap: 4,
+  },
+  teamInitialsBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teamInitialsBadgeLarge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teamInitials: {
+    fontSize: 9,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  teamInitialsLarge: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
 });

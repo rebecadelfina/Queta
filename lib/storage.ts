@@ -7,6 +7,11 @@ const KEYS = {
   USERS: "qb_users",
   CURRENT_USER: "qb_current_user",
   COMMENTS: "qb_comments",
+  TEAM_CONFIG: "qb_team_config",
+  MARKET_CONFIG: "qb_market_config",
+  MATCHES: "qb_matches",
+  API_MATCHES: "qb_api_matches", // Jogos da API
+  APP_INSTALL_DATE: "qb_app_install_date", // Data de primeira instalação
 };
 
 export const MARKETS = [
@@ -108,6 +113,9 @@ export interface Reservation {
   imageUri: string;
   date: string;
   published: boolean;
+  ticketId?: string; // ID da ficha
+  type: "initial" | "result"; // initial (antes jogo) | result (depois jogo)
+  expiresAt?: string; // Data de expiração para fichas de resultado (ISO string)
 }
 
 export interface ScaleEntry {
@@ -134,6 +142,43 @@ export interface Comment {
   text: string;
   date: string;
   approved: boolean;
+}
+
+export interface TeamConfig {
+  name: string;
+  active: boolean;
+}
+
+export interface MarketConfig {
+  name: string;
+  teamNames: string[]; // Equipas para as quais este mercado está disponível
+  active: boolean;
+}
+
+export interface Match {
+  id: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  homeTeam: string;
+  awayTeam: string;
+  league: string;
+  available: boolean; // Se está disponível para os utilizadores
+  selectedMarkets: string[]; // Mercados selecionados para este jogo
+  status: "pending" | "live" | "finished";
+}
+
+export interface ApiMatch {
+  id: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  homeTeam: string;
+  awayTeam: string;
+  homeTeamId?: string;
+  awayTeamId?: string;
+  league: string;
+  competition?: string;
+  status: "SCHEDULED" | "LIVE" | "FINISHED" | "POSTPONED" | "CANCELLED";
+  feedTime?: string; // timestamp da API
 }
 
 function genId(): string {
@@ -242,6 +287,73 @@ export async function createAdminIfNeeded(): Promise<void> {
   }
 }
 
+export async function createTestUserIfNeeded(): Promise<void> {
+  const users = await getUsers();
+  if (!users.find((u) => u.username === "testeuser")) {
+    const now = new Date().toISOString();
+    const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    
+    // Comprovativo fake em base64 (PNG simples)
+    const fakeProof = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    
+    const testUser: UserProfile = {
+      id: genId(),
+      username: "testeuser",
+      password: "senha123",
+      displayName: "Teste - Pagamento Pendente",
+      photoUri: "https://i.pravatar.cc/150?img=5",
+      isAdmin: false,
+      trialStart: now,
+      subscription: { 
+        active: true, 
+        plan: "7days", 
+        startDate: now, 
+        endDate: endDate, 
+        paymentStatus: "pending",
+        paymentProofUri: fakeProof
+      },
+      createdAt: now,
+    };
+    users.push(testUser);
+    await saveUsers(users);
+  }
+}
+
+export async function registerInstallationDate(): Promise<void> {
+  const existing = await AsyncStorage.getItem(KEYS.APP_INSTALL_DATE);
+  if (!existing) {
+    await AsyncStorage.setItem(KEYS.APP_INSTALL_DATE, new Date().toISOString());
+  }
+}
+
+export async function getInstallationDate(): Promise<Date | null> {
+  const dateStr = await AsyncStorage.getItem(KEYS.APP_INSTALL_DATE);
+  return dateStr ? new Date(dateStr) : null;
+}
+
+export async function isTrialExpired(): Promise<boolean> {
+  const installDate = await getInstallationDate();
+  if (!installDate) return false;
+  
+  const now = new Date();
+  const diffMs = now.getTime() - installDate.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  
+  return diffDays > 3; // Trial de 3 dias
+}
+
+export async function getDaysLeftInTrial(): Promise<number> {
+  const installDate = await getInstallationDate();
+  if (!installDate) return 3;
+  
+  const now = new Date();
+  const diffMs = now.getTime() - installDate.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  
+  const daysLeft = Math.max(0, 3 - Math.ceil(diffDays));
+  return daysLeft;
+}
+
 export async function getPredictions(): Promise<Prediction[]> {
   return getJSON(KEYS.PREDICTIONS, []);
 }
@@ -269,7 +381,14 @@ export async function deletePrediction(id: string): Promise<void> {
 }
 
 export async function getReservations(): Promise<Reservation[]> {
-  return getJSON(KEYS.RESERVATIONS, []);
+  const reservations = await getJSON(KEYS.RESERVATIONS, []);
+  // Limpar reservas de resultado expiradas
+  const now = new Date().toISOString();
+  const active = reservations.filter((r) => !r.expiresAt || r.expiresAt > now);
+  if (active.length !== reservations.length) {
+    await setJSON(KEYS.RESERVATIONS, active);
+  }
+  return active;
 }
 
 export async function saveReservation(r: Omit<Reservation, "id">): Promise<Reservation> {
@@ -292,6 +411,43 @@ export async function updateReservation(id: string, updates: Partial<Reservation
 export async function deleteReservation(id: string): Promise<void> {
   const reservations = await getReservations();
   await setJSON(KEYS.RESERVATIONS, reservations.filter((r) => r.id !== id));
+}
+
+// Result Reservations (Fichas de Resultado)
+export async function addResultReservation(house: "bantubet" | "elephantebet", imageUri: string, ticketId: string | undefined, daysExpire: number): Promise<Reservation> {
+  const reservations = await getReservations();
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + daysExpire);
+  
+  const newR: Reservation = {
+    id: genId(),
+    house,
+    imageUri,
+    ticketId,
+    date: new Date().toISOString(),
+    published: true, // Fichas de resultado sempre públicas
+    type: "result",
+    expiresAt: expiresAt.toISOString(),
+  };
+  reservations.push(newR);
+  await setJSON(KEYS.RESERVATIONS, reservations);
+  return newR;
+}
+
+export async function getResultReservations(house: "bantubet" | "elephantebet"): Promise<Reservation[]> {
+  const reservations = await getReservations();
+  return reservations.filter((r) => r.house === house && r.type === "result");
+}
+
+export async function updateReservationExpiry(id: string, daysExpire: number): Promise<void> {
+  const reservations = await getReservations();
+  const idx = reservations.findIndex((r) => r.id === id);
+  if (idx >= 0) {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + daysExpire);
+    reservations[idx].expiresAt = expiresAt.toISOString();
+    await setJSON(KEYS.RESERVATIONS, reservations);
+  }
 }
 
 export async function getScaleEntries(): Promise<ScaleEntry[]> {
@@ -391,6 +547,53 @@ export function getWeekOfMonth(dateStr: string): number {
   return Math.ceil((d.getDate() + firstDay.getDay()) / 7);
 }
 
+// Team & Market Configuration
+export async function getTeamConfigs(): Promise<TeamConfig[]> {
+  return getJSON(KEYS.TEAM_CONFIG, []);
+}
+
+export async function saveTeamConfigs(configs: TeamConfig[]): Promise<void> {
+  await setJSON(KEYS.TEAM_CONFIG, configs);
+}
+
+export async function addTeamConfig(team: TeamConfig): Promise<void> {
+  const configs = await getTeamConfigs();
+  const exists = configs.find((t) => t.name.toLowerCase() === team.name.toLowerCase());
+  if (!exists) {
+    configs.push(team);
+    await saveTeamConfigs(configs);
+  }
+}
+
+export async function removeTeamConfig(teamName: string): Promise<void> {
+  const configs = await getTeamConfigs();
+  await saveTeamConfigs(configs.filter((t) => t.name !== teamName));
+}
+
+export async function getMarketConfigs(): Promise<MarketConfig[]> {
+  return getJSON(KEYS.MARKET_CONFIG, []);
+}
+
+export async function saveMarketConfigs(configs: MarketConfig[]): Promise<void> {
+  await setJSON(KEYS.MARKET_CONFIG, configs);
+}
+
+export async function updateMarketTeams(marketName: string, teamNames: string[]): Promise<void> {
+  const configs = await getMarketConfigs();
+  const idx = configs.findIndex((m) => m.name === marketName);
+  if (idx >= 0) {
+    configs[idx].teamNames = teamNames;
+    await saveMarketConfigs(configs);
+  }
+}
+
+export async function getAvailableMarketsForTeam(teamName: string): Promise<string[]> {
+  const configs = await getMarketConfigs();
+  return configs
+    .filter((m) => m.active && m.teamNames.includes(teamName))
+    .map((m) => m.name);
+}
+
 export async function seedDemoData(): Promise<void> {
   await createAdminIfNeeded();
   const predictions = await getPredictions();
@@ -422,4 +625,118 @@ export async function seedDemoData(): Promise<void> {
     { date: todayStr, odds: [{ value: 2.59, result: "pending", label: "Odd 1" }, { value: 3.23, result: "pending", label: "Odd 2" }, { value: 8.41, result: "pending", label: "Bonus" }], isScheduled: false },
   ];
   for (const s of demoScale) await saveScaleEntry(s);
+}
+
+// Match Management (Jogos com data/hora)
+export async function getMatches(): Promise<Match[]> {
+  return getJSON(KEYS.MATCHES, []);
+}
+
+export async function saveMatches(matches: Match[]): Promise<void> {
+  await setJSON(KEYS.MATCHES, matches);
+}
+
+export async function addMatch(match: Omit<Match, "id">): Promise<Match> {
+  const matches = await getMatches();
+  const newMatch = { ...match, id: genId() };
+  matches.push(newMatch);
+  await saveMatches(matches);
+  return newMatch;
+}
+
+export async function updateMatch(id: string, updates: Partial<Match>): Promise<void> {
+  const matches = await getMatches();
+  const idx = matches.findIndex((m) => m.id === id);
+  if (idx >= 0) {
+    matches[idx] = { ...matches[idx], ...updates };
+    await saveMatches(matches);
+  }
+}
+
+export async function deleteMatch(id: string): Promise<void> {
+  const matches = await getMatches();
+  await saveMatches(matches.filter((m) => m.id !== id));
+}
+
+export async function getMatchesByDate(date: string): Promise<Match[]> {
+  const matches = await getMatches();
+  return matches.filter((m) => m.date === date).sort((a, b) => a.time.localeCompare(b.time));
+}
+
+// API Match Functions
+export async function getApiMatches(): Promise<ApiMatch[]> {
+  return getJSON(KEYS.API_MATCHES, []);
+}
+
+export async function saveApiMatches(matches: ApiMatch[]): Promise<void> {
+  await setJSON(KEYS.API_MATCHES, matches);
+}
+
+export async function fetchMatchesForDate(dateStr: string): Promise<ApiMatch[]> {
+  try {
+    const API_KEY = "5bdac23e79514c9aac67cf28e95d3ae3"; // Football-Data.org API key
+    
+    // Format date for API (YYYY-MM-DD)
+    const [year, month, day] = dateStr.split("-");
+    const startDate = `${year}-${month}-${day}`;
+    const endDate = `${year}-${month}-${day}`;
+
+    // Fetch from Football-Data.org - Get all matches for the day
+    const response = await fetch(
+      `https://api.football-data.org/v4/matches?dateFrom=${startDate}&dateTo=${endDate}`,
+      {
+        headers: { "X-Auth-Token": API_KEY },
+      }
+    );
+
+    if (!response.ok) {
+      console.error("Football-Data API error:", response.status, response.statusText);
+      return [];
+    }
+
+    const data: any = await response.json();
+    const matches: ApiMatch[] = [];
+
+    if (data.matches && Array.isArray(data.matches)) {
+      for (const m of data.matches) {
+        const [hours, minutes] = (m.utcDate?.split("T")[1]?.substring(0, 5) || "00:00").split(":");
+        const localTime = `${hours}:${minutes}`;
+
+        matches.push({
+          id: `api_${m.id}`,
+          date: dateStr,
+          time: localTime,
+          homeTeam: m.homeTeam?.name || m.homeTeam?.shortName || "Home",
+          awayTeam: m.awayTeam?.name || m.awayTeam?.shortName || "Away",
+          homeTeamId: m.homeTeam?.id?.toString(),
+          awayTeamId: m.awayTeam?.id?.toString(),
+          league: m.competition?.name || "Unknown League",
+          competition: m.competition?.code || "UNK",
+          status: m.status || "SCHEDULED",
+          feedTime: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Cache the results
+    await saveApiMatches(matches);
+    return matches;
+  } catch (error) {
+    console.error("Error fetching matches from API:", error);
+    return [];
+  }
+}
+
+export async function convertApiMatchToMatch(apiMatch: ApiMatch): Promise<Match> {
+  return {
+    id: genId(),
+    date: apiMatch.date,
+    time: apiMatch.time,
+    homeTeam: apiMatch.homeTeam,
+    awayTeam: apiMatch.awayTeam,
+    league: apiMatch.league,
+    available: false, // starts as unavailable, admin enables it
+    selectedMarkets: [],
+    status: apiMatch.status === "LIVE" ? "live" : apiMatch.status === "FINISHED" ? "finished" : "pending",
+  };
 }

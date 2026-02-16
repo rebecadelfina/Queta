@@ -8,10 +8,15 @@ interface DataContextValue {
   scaleEntries: Storage.ScaleEntry[];
   comments: Storage.Comment[];
   allUsers: Storage.UserProfile[];
+  teamConfigs: Storage.TeamConfig[];
+  marketConfigs: Storage.MarketConfig[];
+  matches: Storage.Match[];
   hasAccess: boolean;
   daysLeft: number;
   isTrial: boolean;
   loading: boolean;
+  trialDaysLeft: number;
+  trialExpired: boolean;
   refreshAll: () => Promise<void>;
   login: (username: string, password: string) => Promise<Storage.UserProfile | null>;
   register: (username: string, password: string, displayName: string) => Promise<Storage.UserProfile | null>;
@@ -24,6 +29,9 @@ interface DataContextValue {
   addReservation: (r: Omit<Storage.Reservation, "id">) => Promise<void>;
   publishReservation: (id: string) => Promise<void>;
   deleteReservation: (id: string) => Promise<void>;
+  addResultReservation: (house: "bantubet" | "elephantebet", imageUri: string, ticketId: string | undefined, daysExpire: number) => Promise<void>;
+  getResultReservations: (house: "bantubet" | "elephantebet") => Promise<Storage.Reservation[]>;
+  updateReservationExpiry: (id: string, daysExpire: number) => Promise<void>;
   addScaleEntry: (s: Omit<Storage.ScaleEntry, "id">) => Promise<void>;
   updateScaleEntry: (id: string, updates: Partial<Storage.ScaleEntry>) => Promise<void>;
   submitPaymentProof: (uri: string, plan: "7days" | "30days") => Promise<void>;
@@ -31,6 +39,18 @@ interface DataContextValue {
   addComment: (text: string) => Promise<void>;
   approveComment: (id: string) => Promise<void>;
   deleteComment: (id: string) => Promise<void>;
+  // Team & Market Config
+  addTeamConfig: (team: Storage.TeamConfig) => Promise<void>;
+  removeTeamConfig: (teamName: string) => Promise<void>;
+  updateMarketTeams: (marketName: string, teamNames: string[]) => Promise<void>;
+  saveTeamConfigs: (configs: Storage.TeamConfig[]) => Promise<void>;
+  saveMarketConfigs: (configs: Storage.MarketConfig[]) => Promise<void>;
+  // Match Management
+  addMatch: (match: Omit<Storage.Match, "id">) => Promise<void>;
+  updateMatch: (id: string, updates: Partial<Storage.Match>) => Promise<void>;
+  deleteMatch: (id: string) => Promise<void>;
+  getMatchesByDate: (date: string) => Promise<Storage.Match[]>;
+  saveMatches: (matches: Storage.Match[]) => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -42,29 +62,62 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [scaleEntries, setScaleEntries] = useState<Storage.ScaleEntry[]>([]);
   const [comments, setComments] = useState<Storage.Comment[]>([]);
   const [allUsers, setAllUsers] = useState<Storage.UserProfile[]>([]);
+  const [teamConfigs, setTeamConfigs] = useState<Storage.TeamConfig[]>([]);
+  const [marketConfigs, setMarketConfigs] = useState<Storage.MarketConfig[]>([]);
+  const [matches, setMatches] = useState<Storage.Match[]>([]);
   const [hasAccess, setHasAccess] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
   const [isTrial, setIsTrial] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [trialDaysLeft, setTrialDaysLeft] = useState(3);
+  const [trialExpired, setTrialExpired] = useState(false);
 
   const refreshAll = useCallback(async () => {
     try {
+      // Registra a data de instalação na primeira vez
+      await Storage.registerInstallationDate();
+      await Storage.createAdminIfNeeded();
+      await Storage.createTestUserIfNeeded();
+      
+      // Verifica se o trial expirou
+      const expired = await Storage.isTrialExpired();
+      const daysLeft = await Storage.getDaysLeftInTrial();
+      setTrialExpired(expired);
+      setTrialDaysLeft(daysLeft);
+      
       await Storage.seedDemoData();
-      const [preds, res, scale, cmts, users, user] = await Promise.all([
+      const [preds, res, scale, cmts, users, user, teams, markets, mtchs] = await Promise.all([
         Storage.getPredictions(),
         Storage.getReservations(),
         Storage.getScaleEntries(),
         Storage.getComments(),
         Storage.getUsers(),
         Storage.getCurrentUser(),
+        Storage.getTeamConfigs(),
+        Storage.getMarketConfigs(),
+        Storage.getMatches(),
       ]);
       setPredictions(preds);
       setReservations(res);
       setScaleEntries(scale);
       setComments(cmts);
       setAllUsers(users);
-      if (user) {
-        const freshUser = users.find((u) => u.id === user.id);
+      setTeamConfigs(teams);
+      setMarketConfigs(markets);
+      setMatches(mtchs);
+      
+      let currentUserToSet = user;
+      
+      // Se nenhum usuário logado, tenta logar o admin automaticamente
+      if (!user) {
+        const adminUser = users.find((u) => u.isAdmin);
+        if (adminUser) {
+          currentUserToSet = adminUser;
+        }
+      }
+      
+      if (currentUserToSet) {
+        const freshUser = users.find((u) => u.id === currentUserToSet!.id);
         if (freshUser) {
           setCurrentUser(freshUser);
           const access = Storage.checkUserAccess(freshUser);
@@ -72,7 +125,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setDaysLeft(access.daysLeft);
           setIsTrial(access.isTrial);
         } else {
-          setCurrentUser(user);
+          setCurrentUser(currentUserToSet);
+          const access = Storage.checkUserAccess(currentUserToSet);
+          setHasAccess(access.hasAccess);
+          setDaysLeft(access.daysLeft);
+          setIsTrial(access.isTrial);
         }
       } else {
         setCurrentUser(null);
@@ -166,6 +223,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setReservations(await Storage.getReservations());
   }, []);
 
+  const addResultReservationFn = useCallback(async (house: "bantubet" | "elephantebet", imageUri: string, ticketId: string | undefined, daysExpire: number) => {
+    await Storage.addResultReservation(house, imageUri, ticketId, daysExpire);
+    setReservations(await Storage.getReservations());
+  }, []);
+
+  const getResultReservationsFn = useCallback(async (house: "bantubet" | "elephantebet") => {
+    return Storage.getResultReservations(house);
+  }, []);
+
+  const updateReservationExpiryFn = useCallback(async (id: string, daysExpire: number) => {
+    await Storage.updateReservationExpiry(id, daysExpire);
+    setReservations(await Storage.getReservations());
+  }, []);
+
   const addScaleEntry = useCallback(async (s: Omit<Storage.ScaleEntry, "id">) => {
     await Storage.saveScaleEntry(s);
     setScaleEntries(await Storage.getScaleEntries());
@@ -243,23 +314,83 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setComments(await Storage.getComments());
   }, []);
 
+  // Team & Market Config functions
+  const addTeamConfigFn = useCallback(async (team: Storage.TeamConfig) => {
+    await Storage.addTeamConfig(team);
+    setTeamConfigs(await Storage.getTeamConfigs());
+  }, []);
+
+  const removeTeamConfigFn = useCallback(async (teamName: string) => {
+    await Storage.removeTeamConfig(teamName);
+    setTeamConfigs(await Storage.getTeamConfigs());
+  }, []);
+
+  const updateMarketTeamsFn = useCallback(async (marketName: string, teamNames: string[]) => {
+    await Storage.updateMarketTeams(marketName, teamNames);
+    setMarketConfigs(await Storage.getMarketConfigs());
+  }, []);
+
+  const saveTeamConfigsFn = useCallback(async (configs: Storage.TeamConfig[]) => {
+    await Storage.saveTeamConfigs(configs);
+    setTeamConfigs(configs);
+  }, []);
+
+  const saveMarketConfigsFn = useCallback(async (configs: Storage.MarketConfig[]) => {
+    await Storage.saveMarketConfigs(configs);
+    setMarketConfigs(configs);
+  }, []);
+
+  // Match Management functions
+  const addMatchFn = useCallback(async (match: Omit<Storage.Match, "id">) => {
+    await Storage.addMatch(match);
+    setMatches(await Storage.getMatches());
+  }, []);
+
+  const updateMatchFn = useCallback(async (id: string, updates: Partial<Storage.Match>) => {
+    await Storage.updateMatch(id, updates);
+    setMatches(await Storage.getMatches());
+  }, []);
+
+  const deleteMatchFn = useCallback(async (id: string) => {
+    await Storage.deleteMatch(id);
+    setMatches(await Storage.getMatches());
+  }, []);
+
+  const getMatchesByDateFn = useCallback(async (date: string) => {
+    return Storage.getMatchesByDate(date);
+  }, []);
+
+  const saveMatchesFn = useCallback(async (mtchs: Storage.Match[]) => {
+    await Storage.saveMatches(mtchs);
+    setMatches(mtchs);
+  }, []);
+
   const value = useMemo(() => ({
     currentUser, predictions, reservations, scaleEntries, comments, allUsers,
-    hasAccess, daysLeft, isTrial, loading, refreshAll,
+    teamConfigs, marketConfigs, matches,
+    hasAccess, daysLeft, isTrial, loading, trialDaysLeft, trialExpired, refreshAll,
     login, register, logout, updateProfile, changePassword,
     addPrediction, updatePrediction, deletePrediction,
     addReservation, publishReservation, deleteReservation,
+    addResultReservation: addResultReservationFn, getResultReservations: getResultReservationsFn, updateReservationExpiry: updateReservationExpiryFn,
     addScaleEntry, updateScaleEntry,
     submitPaymentProof, approveUserSubscription,
     addComment: addCommentFn, approveComment: approveCommentFn, deleteComment: deleteCommentFn,
+    addTeamConfig: addTeamConfigFn, removeTeamConfig: removeTeamConfigFn,
+    updateMarketTeams: updateMarketTeamsFn, saveTeamConfigs: saveTeamConfigsFn, saveMarketConfigs: saveMarketConfigsFn,
+    addMatch: addMatchFn, updateMatch: updateMatchFn, deleteMatch: deleteMatchFn, getMatchesByDate: getMatchesByDateFn, saveMatches: saveMatchesFn,
   }), [currentUser, predictions, reservations, scaleEntries, comments, allUsers,
-    hasAccess, daysLeft, isTrial, loading, refreshAll,
+    teamConfigs, marketConfigs, matches,
+    hasAccess, daysLeft, isTrial, loading, trialDaysLeft, trialExpired, refreshAll,
     login, register, logout, updateProfile, changePassword,
     addPrediction, updatePrediction, deletePrediction,
     addReservation, publishReservation, deleteReservation,
+    addResultReservationFn, getResultReservationsFn, updateReservationExpiryFn,
     addScaleEntry, updateScaleEntry,
     submitPaymentProof, approveUserSubscription,
-    addCommentFn, approveCommentFn, deleteCommentFn]);
+    addCommentFn, approveCommentFn, deleteCommentFn,
+    addTeamConfigFn, removeTeamConfigFn, updateMarketTeamsFn, saveTeamConfigsFn, saveMarketConfigsFn,
+    addMatchFn, updateMatchFn, deleteMatchFn, getMatchesByDateFn, saveMatchesFn]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import {
   StyleSheet, Text, View, ScrollView, RefreshControl,
-  Pressable, Platform, ActivityIndicator,
+  Pressable, Platform, ActivityIndicator, Image, Modal, TextInput,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,8 +10,56 @@ import { router } from "expo-router";
 import Colors from "@/constants/colors";
 import { useData } from "@/lib/data-context";
 import { getTodayStr } from "@/lib/storage";
+import { getTeamLogo } from "@/lib/team-logos";
+import { LoginScreen } from "@/components/LoginScreen";
+import { PremiumUnlockModal } from "@/components/PremiumUnlockModal";
+import { TrialBanner } from "@/components/TrialBanner";
+import { processPayment, activateSubscription } from "@/components/PaymentIntegration";
+import { NotificationService, type Notification } from "@/lib/notifications-service";
+import { NotificationToast } from "@/components/NotificationToast";
+import { NotificationCenter } from "@/components/NotificationCenter";
 
-function PredictionCard({ prediction, locked }: { prediction: any; locked: boolean }) {
+function TeamBadge({ teamName, size = "small" }: { teamName: string; size?: "small" | "large" }) {
+  const [state, setState] = useState<{ logoUrl: string | null; initials: string; color: string } | null>(null);
+  const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+    getTeamLogo(teamName).then((result) => {
+      setState(result);
+    });
+  }, [teamName]);
+
+  if (!state) {
+    return (
+      <View style={size === "large" ? styles.teamLogoPlaceholderLarge : styles.teamLogoPlaceholder}>
+        <Ionicons name="shield" size={size === "large" ? 24 : 16} color={Colors.light.textSecondary} />
+      </View>
+    );
+  }
+
+  // If we have a logo URL and no error, try to display it
+  if (state.logoUrl && !imageError) {
+    return (
+      <Image
+        source={{ uri: state.logoUrl }}
+        style={size === "large" ? styles.teamLogoLarge : styles.teamLogo}
+        onError={() => {
+          setImageError(true);
+        }}
+      />
+    );
+  }
+
+  // Fallback: show initials in a colored circle
+  return (
+    <View style={[size === "large" ? styles.teamInitialsBadgeLarge : styles.teamInitialsBadge, { backgroundColor: state.color }]}>
+      <Text style={size === "large" ? styles.teamInitialsLarge : styles.teamInitials}>{state.initials}</Text>
+    </View>
+  );
+}
+
+function PredictionCard({ prediction, locked, blurMarket, onLockPressed }: { prediction: any; locked: boolean; blurMarket?: boolean; onLockPressed?: () => void }) {
   const resultColor = prediction.result === "win"
     ? Colors.light.win
     : prediction.result === "loss"
@@ -40,15 +88,15 @@ function PredictionCard({ prediction, locked }: { prediction: any; locked: boole
       </View>
 
       {locked && prediction.isPremium ? (
-        <View style={styles.lockedContent}>
+        <Pressable onPress={onLockPressed} style={styles.lockedContent}>
           <Ionicons name="lock-closed" size={32} color={Colors.light.textSecondary} />
           <Text style={styles.lockedText}>Desbloqueie para ver</Text>
-        </View>
+        </Pressable>
       ) : (
         <>
           <View style={styles.matchRow}>
             <View style={styles.teamContainer}>
-              <Ionicons name="shirt" size={20} color={Colors.light.text} />
+              <TeamBadge teamName={prediction.homeTeam} size="large" />
               <Text style={styles.teamName} numberOfLines={1}>{prediction.homeTeam}</Text>
             </View>
             <View style={styles.timeContainer}>
@@ -57,13 +105,13 @@ function PredictionCard({ prediction, locked }: { prediction: any; locked: boole
             </View>
             <View style={styles.teamContainer}>
               <Text style={styles.teamName} numberOfLines={1}>{prediction.awayTeam}</Text>
-              <Ionicons name="shirt-outline" size={20} color={Colors.light.textSecondary} />
+              <TeamBadge teamName={prediction.awayTeam} size="large" />
             </View>
           </View>
 
           <View style={styles.marketRow}>
-            <View style={styles.marketBadge}>
-              <Text style={styles.marketText}>{prediction.market}</Text>
+            <View style={[styles.marketBadge, blurMarket && styles.marketBadgeBlurred]}>
+              <Text style={[styles.marketText, blurMarket && styles.marketTextBlurred]}>{prediction.market}</Text>
             </View>
             <View style={styles.oddContainer}>
               <Text style={styles.oddLabel}>Odd</Text>
@@ -84,8 +132,16 @@ function PredictionCard({ prediction, locked }: { prediction: any; locked: boole
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { currentUser, predictions, hasAccess, daysLeft, isTrial, loading, refreshAll } = useData();
+  const { currentUser, predictions, hasAccess, daysLeft, isTrial, loading, refreshAll, trialExpired, login, register } = useData();
   const [refreshing, setRefreshing] = useState(false);
+  
+  // New modal states
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const [showLoginScreen, setShowLoginScreen] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [notification, setNotification] = useState<Notification | null>(null);
+  const [notificationCenterVisible, setNotificationCenterVisible] = useState(false);
+  
   const today = getTodayStr();
   const todayPredictions = predictions.filter((p) => p.date === today);
   const isAdmin = currentUser?.isAdmin ?? false;
@@ -96,15 +152,16 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [refreshAll]);
 
+  // Handle premium event click
+  const handlePremiumLockPress = () => {
+    if (trialExpired && !hasAccess && !isAdmin) {
+      setShowPremiumModal(true);
+    }
+  };
+
   const topInset = Platform.OS === "web" ? 67 : insets.top;
 
-  useEffect(() => {
-    if (!loading && !currentUser) {
-      router.replace("/login");
-    }
-  }, [loading, currentUser]);
-
-  if (loading || !currentUser) {
+  if (loading) {
     return (
       <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
         <ActivityIndicator size="large" color={Colors.light.primary} />
@@ -114,6 +171,11 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
+      <NotificationToast 
+        notification={notification} 
+        onDismiss={() => setNotification(null)} 
+      />
+      
       <LinearGradient
         colors={["#0D1117", "#111B27", "#0D1117"]}
         style={StyleSheet.absoluteFill}
@@ -126,68 +188,240 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>QUETABET BEST</Text>
-            <Text style={styles.subtitle}>Prognosticos do Dia</Text>
-          </View>
-          <View style={styles.headerRight}>
-            {isTrial && (
-              <View style={styles.trialBadge}>
-                <Ionicons name="hourglass" size={12} color={Colors.light.premium} />
-                <Text style={styles.trialText}>{daysLeft}d trial</Text>
-              </View>
-            )}
-            {isAdmin && (
-              <Pressable
-                onPress={() => router.push("/admin")}
-                style={({ pressed }) => [styles.adminBtn, { opacity: pressed ? 0.7 : 1 }]}
+        {/* Modern Header */}
+        <View style={styles.modernHeader}>
+          <View style={styles.headerContent}>
+            <View>
+              <Text style={styles.appName}>QUETABET</Text>
+              <Text style={styles.headerSubtitle}>Prognósticos Premium</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <Pressable 
+                onPress={() => setNotificationCenterVisible(true)}
+                style={({ pressed }) => [styles.notificationButton, pressed && { opacity: 0.7 }]}
               >
-                <Ionicons name="settings" size={22} color={Colors.light.primary} />
+                <Ionicons name="notifications-outline" size={24} color={Colors.light.primary} />
               </Pressable>
-            )}
+              
+              {isTrial && (
+                <LinearGradient
+                  colors={[Colors.light.premium + "30", Colors.light.premium + "10"]}
+                  style={styles.modernTrialBadge}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Ionicons name="hourglass-outline" size={14} color={Colors.light.premium} />
+                  <Text style={styles.modernTrialText}>{trialExpired ? "Expirado" : `${daysLeft}d`}</Text>
+                </LinearGradient>
+              )}
+            </View>
           </View>
         </View>
 
-        {!hasAccess && !isAdmin && (
-          <View style={styles.lockedBanner}>
-            <Ionicons name="lock-closed" size={24} color={Colors.light.premium} />
-            <Text style={styles.lockedBannerText}>Periodo de teste expirado</Text>
-            <Text style={styles.lockedBannerSub}>Assine para ver todos os prognosticos</Text>
-          </View>
+        {/* Trial Banner - Show if trial active or expired */}
+        {isTrial && (
+          <TrialBanner
+            daysLeft={daysLeft}
+            trialExpired={trialExpired}
+            onUpgradePress={() => setShowPremiumModal(true)}
+          />
         )}
 
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{todayPredictions.length}</Text>
-            <Text style={styles.statLabel}>Jogos Hoje</Text>
+        {/* Modern Stats Grid */}
+        <View style={styles.statsGrid}>
+          <View style={styles.statCardModern}>
+            <LinearGradient
+              colors={[Colors.light.primary + "15", Colors.light.primary + "05"]}
+              style={styles.statGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <View style={styles.statIconBox}>
+                <Ionicons name="football" size={20} color={Colors.light.primary} />
+              </View>
+              <Text style={styles.statValueModern}>{todayPredictions.length}</Text>
+              <Text style={styles.statLabelModern}>Jogos</Text>
+            </LinearGradient>
           </View>
-          <View style={styles.statCard}>
-            <Text style={[styles.statValue, { color: Colors.light.win }]}>
-              {todayPredictions.filter((p) => p.result === "win").length}
-            </Text>
-            <Text style={styles.statLabel}>Ganhos</Text>
+
+          <View style={styles.statCardModern}>
+            <LinearGradient
+              colors={[Colors.light.win + "15", Colors.light.win + "05"]}
+              style={styles.statGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <View style={styles.statIconBox}>
+                <Ionicons name="checkmark-circle" size={20} color={Colors.light.win} />
+              </View>
+              <Text style={[styles.statValueModern, { color: Colors.light.win }]}>
+                {todayPredictions.filter((p) => p.result === "win").length}
+              </Text>
+              <Text style={styles.statLabelModern}>Ganhos</Text>
+            </LinearGradient>
           </View>
-          <View style={styles.statCard}>
-            <Text style={[styles.statValue, { color: Colors.light.loss }]}>
-              {todayPredictions.filter((p) => p.result === "loss").length}
-            </Text>
-            <Text style={styles.statLabel}>Perdas</Text>
+
+          <View style={styles.statCardModern}>
+            <LinearGradient
+              colors={[Colors.light.loss + "15", Colors.light.loss + "05"]}
+              style={styles.statGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <View style={styles.statIconBox}>
+                <Ionicons name="close-circle" size={20} color={Colors.light.loss} />
+              </View>
+              <Text style={[styles.statValueModern, { color: Colors.light.loss }]}>
+                {todayPredictions.filter((p) => p.result === "loss").length}
+              </Text>
+              <Text style={styles.statLabelModern}>Perdas</Text>
+            </LinearGradient>
           </View>
         </View>
 
-        {todayPredictions.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="football-outline" size={48} color={Colors.light.textSecondary} />
-            <Text style={styles.emptyText}>Nenhum prognostico para hoje</Text>
-            <Text style={styles.emptySubtext}>Volte mais tarde para novos jogos</Text>
+        {/* Predictions Section */}
+        <View style={styles.predictionsSection}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Prognósticos de Hoje</Text>
+            <View style={styles.sectionBadge}>
+              <Text style={styles.sectionBadgeText}>{todayPredictions.length}</Text>
+            </View>
           </View>
-        ) : (
-          todayPredictions.map((p) => (
-            <PredictionCard key={p.id} prediction={p} locked={!hasAccess && !isAdmin} />
-          ))
-        )}
+
+          {todayPredictions.length === 0 ? (
+            <View style={styles.modernEmptyState}>
+              <View style={styles.emptyIconBox}>
+                <Ionicons name="football-outline" size={48} color={Colors.light.textSecondary} />
+              </View>
+              <Text style={styles.emptyTitle}>Nenhum jogo hoje</Text>
+              <Text style={styles.emptySubtext}>Volte mais tarde para novos prognósticos</Text>
+            </View>
+          ) : (
+            <View style={styles.cardsContainer}>
+              {todayPredictions.map((p) => {
+                const isLocked = (trialExpired && !hasAccess && p.isPremium) && !isAdmin;
+                return (
+                  <PredictionCard 
+                    key={p.id} 
+                    prediction={p} 
+                    locked={isLocked}
+                    blurMarket={!isLocked ? false : true}
+                    onLockPressed={handlePremiumLockPress} 
+                  />
+                );
+              })}
+            </View>
+          )}
+        </View>
       </ScrollView>
+      
+      {/* Premium Unlock Modal */}
+      <PremiumUnlockModal
+        visible={showPremiumModal}
+        daysLeft={daysLeft}
+        trialExpired={trialExpired}
+        onClose={() => setShowPremiumModal(false)}
+        onLoginPress={() => {
+          setShowPremiumModal(false);
+          setShowLoginScreen(true);
+        }}
+        onPaymentPress={async (plan) => {
+          if (!currentUser) {
+            alert("Você precisa estar logado para pagar");
+            return;
+          }
+
+          setIsProcessingPayment(true);
+
+          try {
+            // Notificar admin sobre novo pagamento
+            const planLabel = plan === "7days" ? "7 Dias" : "30 Dias";
+            await NotificationService.notifyAdminNewPayment(
+              currentUser.id,
+              currentUser.displayName,
+              planLabel
+            );
+
+            // Notificar usuário que pagamento foi enviado
+            setNotification({
+              id: `payment_sent_${Date.now()}`,
+              type: "info",
+              title: "⏳ Pagamento Enviado",
+              message: "Seu pagamento foi enviado. Aguarde aprovação do admin.",
+              timestamp: new Date().toISOString(),
+              read: false,
+            });
+
+            // Iniciar pagamento
+            const result = await processPayment(currentUser.id, plan, "bank_transfer");
+
+            if (result.success) {
+              if (result.bankDetails) {
+                // Transferência bancária
+                alert(
+                  `📋 Detalhes da Transferência\n\n` +
+                  `Banco: ${result.bankDetails.bank}\n` +
+                  `Referência: ${result.referenceId}\n` +
+                  `Valor: ${result.amount} MT\n\n` +
+                  `Faça a transferência e em até 1 hora seu acesso será ativado automatically.`
+                );
+              } else if (result.paymentId) {
+                // Express payment
+                alert("Redirecionando para página de pagamento...");
+                // TODO: Redirecionar para Express quando integrado
+              }
+
+              // Ativar subscrição (simulado)
+              await activateSubscription(currentUser.id, plan);
+
+              // Recarregar dados
+              await refreshAll();
+
+              // Fechar modal
+              setShowPremiumModal(false);
+
+              alert("✅ Acesso Premium ativado com sucesso!");
+            } else {
+              alert(`❌ ${result.error || "Erro ao processar pagamento"}`);
+            }
+          } catch (error) {
+            console.error("Payment error:", error);
+            setNotification({
+              id: `payment_error_${Date.now()}`,
+              type: "error",
+              title: "❌ Erro",
+              message: "Erro ao processar pagamento. Tente novamente.",
+              timestamp: new Date().toISOString(),
+              read: false,
+            });
+          } finally {
+            setIsProcessingPayment(false);
+          }
+        }}
+      />
+
+      {/* Login Screen Modal */}
+      {showLoginScreen && (
+        <Modal
+          visible={showLoginScreen}
+          animationType="slide"
+          onRequestClose={() => setShowLoginScreen(false)}
+        >
+          <LoginScreen
+            onDismiss={() => {
+              setShowLoginScreen(false);
+              refreshAll();
+            }}
+          />
+        </Modal>
+      )}
+
+      {/* Notification Center Modal */}
+      <NotificationCenter
+        visible={notificationCenterVisible}
+        onClose={() => setNotificationCenterVisible(false)}
+        userId={currentUser?.id}
+      />
     </View>
   );
 }
@@ -196,92 +430,201 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.light.background },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16 },
-  header: {
+
+  // Modern Header
+  modernHeader: {
+    marginBottom: 24,
+    paddingVertical: 8,
+  },
+  headerContent: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 20,
   },
-  title: {
-    fontSize: 28,
+  appName: {
+    fontSize: 32,
     fontFamily: "Inter_700Bold",
     color: Colors.light.text,
+    letterSpacing: -0.5,
   },
-  subtitle: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
+  headerSubtitle: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
     color: Colors.light.textSecondary,
-    marginTop: 2,
+    marginTop: 4,
+    letterSpacing: 0.3,
   },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  trialBadge: {
+  headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: Colors.light.premium + "20",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+    gap: 8,
   },
-  trialText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.light.premium,
+  notificationButton: {
+    padding: 8,
   },
-  adminBtn: { padding: 4 },
-  lockedBanner: {
-    backgroundColor: Colors.light.premium + "15",
-    borderRadius: 12,
-    padding: 16,
+  modernTrialBadge: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.premium + "30",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
   },
-  lockedBannerText: {
-    fontSize: 16,
+  modernTrialText: {
+    fontSize: 12,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.premium,
-    marginTop: 8,
   },
-  lockedBannerSub: {
+
+  // Expired Banner
+  expiredBanner: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 14,
+    marginBottom: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: Colors.light.loss + "30",
+  },
+  expiredContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  expiredIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: Colors.light.loss + "15",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  expiredText: {
+    flex: 1,
+  },
+  expiredTitle: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.loss,
+    marginBottom: 2,
+  },
+  expiredSubtitle: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
-    marginTop: 4,
   },
-  statsRow: {
+
+  // Modern Stats Grid
+  statsGrid: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 20,
+    marginBottom: 28,
   },
-  statCard: {
+  statCardModern: {
     flex: 1,
-    backgroundColor: Colors.light.card,
-    borderRadius: 12,
+    borderRadius: 14,
+    overflow: "hidden",
+    height: 110,
+  },
+  statGradient: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: Colors.light.primary + "20",
+    borderRadius: 14,
     padding: 14,
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: Colors.light.cardBorder,
+    justifyContent: "center",
+    gap: 6,
   },
-  statValue: {
-    fontSize: 22,
+  statIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: Colors.light.primary + "20",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statValueModern: {
+    fontSize: 20,
     fontFamily: "Inter_700Bold",
     color: Colors.light.text,
   },
-  statLabel: {
+  statLabelModern: {
     fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: Colors.light.textSecondary,
+  },
+
+  // Predictions Section
+  predictionsSection: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontFamily: "Inter_700Bold",
+    color: Colors.light.text,
+  },
+  sectionBadge: {
+    backgroundColor: Colors.light.primary + "15",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minWidth: 30,
+    alignItems: "center",
+  },
+  sectionBadgeText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.primary,
+  },
+  cardsContainer: {
+    gap: 12,
+  },
+
+  // Modern Empty State
+  modernEmptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 60,
+    gap: 12,
+  },
+  emptyIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 16,
+    backgroundColor: Colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.light.text,
+  },
+  emptySubtext: {
+    fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
-    marginTop: 2,
   },
+
+  // Card Styles
   card: {
     backgroundColor: Colors.light.card,
     borderRadius: 14,
     padding: 16,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: Colors.light.cardBorder,
+    overflow: "hidden",
   },
   cardHeader: {
     flexDirection: "row",
@@ -295,12 +638,12 @@ const styles = StyleSheet.create({
     gap: 4,
     backgroundColor: Colors.light.primary + "15",
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   leagueText: {
     fontSize: 11,
-    fontFamily: "Inter_500Medium",
+    fontFamily: "Inter_600SemiBold",
     color: Colors.light.primary,
   },
   premiumBadge: {
@@ -309,11 +652,11 @@ const styles = StyleSheet.create({
     gap: 3,
     backgroundColor: Colors.light.premium + "20",
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   premiumText: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: "Inter_700Bold",
     color: Colors.light.premium,
   },
@@ -330,7 +673,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   teamName: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.text,
     flexShrink: 1,
@@ -338,10 +681,10 @@ const styles = StyleSheet.create({
   timeContainer: {
     alignItems: "center",
     paddingHorizontal: 12,
-    gap: 2,
+    gap: 3,
   },
   matchTime: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: "Inter_700Bold",
     color: Colors.light.accent,
   },
@@ -349,65 +692,134 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 8,
   },
   marketBadge: {
-    backgroundColor: Colors.light.accent + "20",
+    backgroundColor: Colors.light.accent + "15",
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
     flexShrink: 1,
   },
   marketText: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     color: Colors.light.accent,
   },
-  oddContainer: { alignItems: "center" },
+  marketBadgeBlurred: {
+    backgroundColor: Colors.light.accent + "08",
+    opacity: 0.45,
+  },
+  marketTextBlurred: {
+    color: Colors.light.textSecondary,
+    opacity: 0.5,
+  },
+  oddContainer: { alignItems: "center", gap: 2 },
   oddLabel: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: "Inter_400Regular",
     color: Colors.light.textSecondary,
   },
   oddValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: "Inter_700Bold",
-    color: Colors.light.text,
+    color: Colors.light.primary,
   },
   resultBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
   resultText: {
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: "Inter_600SemiBold",
   },
   lockedContent: {
     alignItems: "center",
-    paddingVertical: 20,
-    gap: 8,
+    paddingVertical: 30,
+    gap: 10,
   },
   lockedText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
     color: Colors.light.textSecondary,
   },
-  emptyState: {
+
+  // Team Logos
+  teamLogo: {
+    width: 24,
+    height: 24,
+    resizeMode: "contain",
+  },
+  teamLogoLarge: {
+    width: 40,
+    height: 40,
+    resizeMode: "contain",
+  },
+  teamLogoPlaceholder: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: Colors.light.card,
     alignItems: "center",
-    paddingVertical: 60,
-    gap: 8,
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
   },
-  emptyText: {
+  teamLogoPlaceholderLarge: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: Colors.light.card,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: Colors.light.cardBorder,
+  },
+  teamInitialsBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teamInitialsBadgeLarge: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  teamInitials: {
+    fontSize: 10,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+  },
+  teamInitialsLarge: {
     fontSize: 16,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.light.text,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
   },
-  emptySubtext: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: Colors.light.textSecondary,
-  },
+
+  // Old styles (kept for compatibility if needed)
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  title: { fontSize: 28, fontFamily: "Inter_700Bold", color: Colors.light.text },
+  subtitle: { fontSize: 14, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  trialBadge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: Colors.light.premium + "20" },
+  trialText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.light.premium },
+  adminBtn: { padding: 4 },
+  lockedBanner: { backgroundColor: Colors.light.premium + "15", borderRadius: 12, padding: 16 },
+  lockedBannerText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: Colors.light.premium },
+  lockedBannerSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary },
+  statsRow: { flexDirection: "row", gap: 10, marginBottom: 20 },
+  statCard: { flex: 1, backgroundColor: Colors.light.card, borderRadius: 12, padding: 14 },
+  statValue: { fontSize: 22, fontFamily: "Inter_700Bold", color: Colors.light.text },
+  statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary },
+  emptyState: { alignItems: "center", paddingVertical: 60, gap: 8 },
+  emptyText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: Colors.light.text },
+  emptySubtext: { fontSize: 13, fontFamily: "Inter_400Regular", color: Colors.light.textSecondary },
 });
