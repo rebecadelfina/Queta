@@ -1,0 +1,81 @@
+🧪 GUIA DE TESTE - SISTEMA DE PAGAMENTOS
+
+═════════════════════════════════════════════════════════════════
+
+✅ USUÁRIO DE TESTE CRIADO AUTOMATICAMENTE
+
+Credenciais:
+  Usuário: testeuser
+  Senha: senha123
+  Nome: Teste - Pagamento Pendente
+  Plan: 7 Dias
+  Status: ⏳ Pagamento Pendente
+
+═════════════════════════════════════════════════════════════════
+
+🔑 COMO TESTAR
+
+1️⃣  Inicie a aplicação (npm run start)
+2️⃣  O usuário de teste será criado automaticamente
+3️⃣  Faça login com as credenciais de teste
+
+OPÇÃO A - Como Usuário Teste:
+   • Vá para "Perfil" → "Plano Premium"
+   • Veja a área de "Enviar Comprovativo"
+   • Clique em "Enviar Comprovativo" para testar o fluxo
+
+OPÇÃO B - Como Admin (Aprovar Pagamento):
+   • Faça login com: admin / admin123
+   • Vá para "Admin" → "Gestão de Pagamentos"
+   • Veja o pagamento pendente do usuário "Teste"
+   • Clique em "Ver Comprovativo Enviado" (verde com gradient)
+   • Aprove ou rejeite o pagamento
+
+═════════════════════════════════════════════════════════════════
+
+🎨 MELHORIAS IMPLEMENTADAS
+
+✓ NotificationCenter:
+  • Fundo alterado para dark mode (#0f1419)
+  • Cores profissionais e modernas
+  • Melhor contraste de texto
+  • Header com estilo aprimorado
+
+✓ AdminPaymentManager:
+  • Comprovativo: Botão com gradient verde (#00FF88)
+  • Placeholder visual quando sem comprovativo
+  • Cores mais impactantes e profissionais
+  • Melhor visibilidade geral
+
+✓ Usuário de Teste:
+  • Criado automaticamente no primeiro acesso
+  • Já possui comprovativo para testar aprovação
+  • Email gerado para testes
+
+═════════════════════════════════════════════════════════════════
+
+📱 ROTAS DO SISTEMA
+
+Admin Dashboard:
+  • /admin → Gestão Geral
+  • Pagamentos Pendentes: Mostra lista com "testeuser"
+
+Usuário Teste:
+  • /reservas → Minhas Reservas
+  • /perfil → Informações do Plano
+
+═════════════════════════════════════════════════════════════════
+
+⚙️ CONFIGURAÇÃO LOCAL
+
+As mudanças foram salvas em:
+  ✓ components/NotificationCenter.tsx
+  ✓ components/AdminPaymentManager.tsx
+  ✓ lib/storage.ts
+  ✓ lib/data-context.tsx
+
+Arquivo de armazenamento (AsyncStorage):
+  • Não rastreado pelo Git
+  • Salvo localmente na pasta do projeto
+
+═════════════════════════════════════════════════════════════════
